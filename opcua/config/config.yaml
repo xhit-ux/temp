@@ -1,0 +1,91 @@
+server:
+  endpoint: "opc.tcp://0.0.0.0:4840/freeopcua/server/"
+  server_name: "OPC2YMatrix Simulator"
+  namespace_uri: "urn:opc2ymatrix:simulator"
+  update_interval_seconds: 1.0
+
+simulation:
+  random_seed: 20260715
+  quality:
+    bad_probability: 0.01
+    uncertain_probability: 0.02
+  spike:
+    enabled: true
+    probability: 0.01
+    multiplier_min: 1.15
+    multiplier_max: 1.45
+  offline:
+    enabled: true
+    probability_per_cycle: 0.002
+    duration_seconds: 8
+
+devices:
+  - id: "Device_01"
+    display_name: "Mixing Tank 01"
+    clock_offset_seconds: 0
+    drift_seconds_per_minute: 0.0
+  - id: "Device_02"
+    display_name: "Pump Station 02"
+    clock_offset_seconds: 15
+    drift_seconds_per_minute: 0.1
+  - id: "Device_03"
+    display_name: "Compressor 03"
+    clock_offset_seconds: -20
+    drift_seconds_per_minute: -0.05
+  - id: "Device_04"
+    display_name: "Conveyor 04"
+    clock_offset_seconds: 30
+    drift_seconds_per_minute: 0.0
+
+points:
+  temperature:
+    data_type: "Double"
+    unit: "C"
+    mode: "random_walk"
+    initial: 45.0
+    min: 20.0
+    max: 90.0
+    step: 1.5
+    trend: 0.03
+  pressure:
+    data_type: "Double"
+    unit: "MPa"
+    mode: "sine"
+    initial: 1.0
+    min: 0.1
+    max: 2.0
+    amplitude: 0.35
+    period_seconds: 60
+    noise: 0.03
+  speed:
+    data_type: "Double"
+    unit: "rpm"
+    mode: "step"
+    initial: 1200.0
+    min: 0.0
+    max: 3000.0
+    step_values: [0.0, 800.0, 1500.0, 2200.0, 2800.0]
+    min_hold_seconds: 8
+    max_hold_seconds: 25
+  current:
+    data_type: "Double"
+    unit: "A"
+    mode: "correlated_current"
+    initial: 18.0
+    min: 0.0
+    max: 50.0
+    base: 3.0
+    speed_factor: 0.014
+    noise: 1.2
+  voltage:
+    data_type: "Double"
+    unit: "V"
+    mode: "noise"
+    initial: 400.0
+    min: 380.0
+    max: 420.0
+    noise: 2.5
+  device_clock:
+    data_type: "DateTime"
+    unit: "timestamp"
+    mode: "device_clock"

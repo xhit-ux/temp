@@ -1,0 +1,45 @@
+# Environment files (keep .env.example as template)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# Go
+src/backend/opc2ymatrix.exe
+src/backend/opc2ymatrix
+*.exe
+*.test
+*.out
+
+# Dead letter data directory (runtime artifacts)
+data/
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Agent / tooling
+.agents/
+
+# Logs
+*.log
+
+# PDF / binary docs (optional — uncomment if you don't want PDFs tracked)
+# *.pdf
