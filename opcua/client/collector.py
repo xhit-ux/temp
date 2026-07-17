@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import time
 from pathlib import Path
@@ -23,7 +24,11 @@ LOGGER = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration defaults (overridable via CLI)
 # ---------------------------------------------------------------------------
-DEFAULT_BACKEND_URL = "http://127.0.0.1:4048"
+# Read backend host/port from environment for the default backend URL
+# Falls back to localhost:4048 if env vars are not set.
+_BACKEND_HOST = os.environ.get("SERVER_HOST", "localhost")
+_BACKEND_PORT = os.environ.get("SERVER_PORT", "4048")
+DEFAULT_BACKEND_URL = f"http://{_BACKEND_HOST}:{_BACKEND_PORT}"
 DEFAULT_QUEUE_SIZE = 10_000
 DEFAULT_SEND_BATCH_SIZE = 50
 DEFAULT_SEND_INTERVAL_SECONDS = 0.5
@@ -65,7 +70,7 @@ class SubscriptionHandler:
         self._node_id_to_device_point: dict[str, tuple[str, str, str, str]] = {}
         self._built = False
 
-    def build_node_map(self, client: Client) -> None:
+    def build_node_map(self) -> None:
         """Pre-build a mapping from NodeId string -> (device_id, point_name, data_type, unit).
 
         This avoids config lookups inside the hot notification path.
@@ -417,7 +422,7 @@ class OPCUACollector:
             device_configs=self.device_configs,
             namespace_idx=namespace_idx,
         )
-        handler.build_node_map(self._client)
+        handler.build_node_map()
 
         # Build node list
         node_ids = list(handler._node_id_to_device_point.keys())
@@ -483,7 +488,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--backend-url",
         default=DEFAULT_BACKEND_URL,
-        help="Base URL of the Go backend (default: http://127.0.0.1:4048).",
+        help=f"Base URL of the Go backend (default read from SERVER_HOST:SERVER_PORT env, or {DEFAULT_BACKEND_URL}).",
     )
     parser.add_argument(
         "--queue-size",
@@ -592,6 +597,7 @@ async def run() -> None:
 
     # Track background tasks for cleanup
     bg_tasks: list[asyncio.Task[Any]] = []
+    handler: Optional[SubscriptionHandler] = None
 
     try:
         # Step 1: Connect to OPC UA server

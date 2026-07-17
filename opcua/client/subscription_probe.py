@@ -30,7 +30,7 @@ class SubscriptionHandler:
 
 
 def parse_args() -> argparse.Namespace:
-    default_config = Path(__file__).resolve().parents[1] / "config" / "simulation_config.yaml"
+    default_config = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
     parser = argparse.ArgumentParser(description="Subscribe to simulator nodes and print DataChange events.")
     parser.add_argument("--config", default=str(default_config), help="Path to simulation YAML config.")
     parser.add_argument("--endpoint", default=None, help="Override OPC UA endpoint.")

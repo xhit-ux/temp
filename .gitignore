@@ -42,4 +42,6 @@ Thumbs.db
 *.log
 
 # PDF / binary docs (optional — uncomment if you don't want PDFs tracked)
-# *.pdf
+*.pdf
+
+review/

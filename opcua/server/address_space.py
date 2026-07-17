@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from asyncua import Server, ua
 
@@ -45,8 +45,9 @@ async def build_address_space(server: Server, config: SimulationConfig, namespac
     return device_nodes
 
 
-def make_data_value(value: Any, data_type: str, status_code: int) -> ua.DataValue:
-    now = datetime.now(timezone.utc)
+def make_data_value(value: Any, data_type: str, status_code: int, now: Optional[datetime] = None) -> ua.DataValue:
+    if now is None:
+        now = datetime.now(timezone.utc)
     return ua.DataValue(
         Value=ua.Variant(value, _variant_type(data_type)),
         StatusCode_=ua.StatusCode(status_code),

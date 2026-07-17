@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -29,7 +29,7 @@ body{
   display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:20;
   transition:background .3s,border .3s;
 }
-.nav-l{display:flex;align-items:center;gap:12px}
+.nav-l{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .nav h1{font-size:15px;font-weight:700;color:var(--ac)}
 .nav .ver{font-size:10px;color:var(--t2);background:var(--s2);padding:2px 8px;border-radius:10px}
 .nav-tabs{display:flex;align-items:center;gap:2px;background:var(--s2);border-radius:8px;padding:3px}
@@ -54,20 +54,22 @@ body{
 .content{padding:16px 24px}
 .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
 .kpi{
-  background:var(--s1);border:1px solid var(--bdr);border-radius:var(--rd);padding:16px 18px;
+  background:var(--s1);border:1px solid var(--bdr);border-radius:var(--rd);padding:14px 16px;
   box-shadow:var(--sh);transition:background .3s,border .3s,box-shadow .3s;
 }
-.kpi .lbl{font-size:11px;color:var(--t2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
-.kpi .val{font-size:28px;font-weight:800;line-height:1.1}
-.kpi .unit{font-size:12px;font-weight:400;color:var(--t2);margin-left:3px}
-.val.ac{color:var(--ac)}.val.ok{color:var(--ok)}.val.er{color:var(--er)}.val.wa{color:var(--wa)}
+.kpi .kpi-lbl{font-size:10px;color:var(--t2);letter-spacing:.3px;margin-bottom:2px}
+.kpi .kpi-sub{font-size:9px;color:var(--t2);opacity:.6;margin-bottom:8px}
+.kpi .kpi-val{font-size:26px;font-weight:800;line-height:1.1}
+.kpi .kpi-unit{font-size:12px;font-weight:400;color:var(--t2);margin-left:3px}
+.val-ac{color:var(--ac)}.val-ok{color:var(--ok)}.val-er{color:var(--er)}.val-wa{color:var(--wa)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
 .card{
   background:var(--s1);border:1px solid var(--bdr);border-radius:var(--rd);padding:16px 18px;
   box-shadow:var(--sh);transition:background .3s,border .3s,box-shadow .3s;
 }
-.card h3{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--t2);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
-.card h3 .badge{font-size:10px;background:var(--s2);padding:2px 8px;border-radius:8px;color:var(--t2);font-weight:400}
+.card h3{font-size:12px;font-weight:700;color:var(--t);margin-bottom:4px;display:flex;align-items:center;justify-content:space-between}
+.card h3 .badge{font-size:10px;background:var(--s2);padding:2px 8px;border-radius:8px;color:var(--t2);font-weight:400;text-transform:none;letter-spacing:0}
+.card .card-desc{font-size:10px;color:var(--t2);margin-bottom:10px;line-height:1.4}
 .full{grid-column:1/-1}
 .ctrl{margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 select{
@@ -87,8 +89,10 @@ input:focus{border-color:var(--ac)}
 .btn:hover{opacity:.85}
 .btn.ghost{background:transparent;border:1px solid var(--bdr);color:var(--t)}
 .btn.sm{padding:4px 10px;font-size:11px}
-.ch{height:240px;position:relative} .ch canvas{width:100%!important;height:100%!important}
-.tw{max-height:400px;overflow-y:auto;border-radius:6px}
+.ch{height:280px;position:relative} .ch canvas{width:100%!important;height:100%!important}
+/* Hover tooltip custom styling */
+.ch .chart-tooltip{position:absolute;pointer-events:none;z-index:10}
+.tw{overflow-y:auto;border-radius:6px}
 table{width:100%;border-collapse:collapse;font-size:11px}
 th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr)}
 th{color:var(--t2);font-weight:600;position:sticky;top:0;background:var(--s1);z-index:1}
@@ -98,12 +102,11 @@ tr:hover td{background:var(--s2)}
   background:var(--s2);border:2px solid var(--bdr);border-radius:var(--rd);padding:12px 14px;
   transition:border .3s,background .3s;
 }
-.dc.al{border-color:var(--er)}
+.dc.al{border-color:var(--er);background:rgba(220,38,38,.04)}
 .dn{font-size:13px;font-weight:700;color:var(--ac);margin-bottom:8px}
 .dr{display:flex;justify-content:space-between;font-size:11px;padding:2.5px 0}
 .dl{color:var(--t2)}.dv{font-weight:600}.dv.bd{color:var(--er)}
 .emp{color:var(--t2);font-size:13px;text-align:center;padding:30px}
-/* SQL Page Layout */
 .sql-page{display:grid;grid-template-columns:1fr 1fr;gap:16px;height:calc(100vh - 130px)}
 .sql-page .panel{
   background:var(--s1);border:1px solid var(--bdr);border-radius:var(--rd);
@@ -127,15 +130,14 @@ tr:hover td{background:var(--s2)}
 .sm{font-size:10px;color:var(--t2);margin-top:4px}
 .lcard{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .lc{
-  background:var(--s2);border-radius:8px;padding:12px 14px;
-  transition:background .3s;
+  background:var(--s2);border-radius:8px;padding:12px 14px;transition:background .3s;
 }
-.lc .lt{font-size:11px;color:var(--t2);margin-bottom:4px}
+.lc .lt{font-size:10px;color:var(--t2);margin-bottom:2px}
+.lc .ls{font-size:9px;color:var(--t2);opacity:.6;margin-bottom:4px}
 .lc .lv{font-size:20px;font-weight:800}
-/* Filter form */
 .filt-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .filt-item{display:flex;flex-direction:column;gap:3px}
-.filt-item label{font-size:10px;color:var(--t2);text-transform:uppercase;letter-spacing:.3px}
+.filt-item label{font-size:10px;color:var(--t2);letter-spacing:.3px}
 .filt-row{display:flex;gap:6px;align-items:center}
 .filt-tags{display:flex;flex-wrap:wrap;gap:4px}
 .filt-tag{
@@ -146,6 +148,8 @@ tr:hover td{background:var(--s2)}
 .live-count{font-size:11px;color:var(--ok);font-weight:600}
 @keyframes flash{0%{opacity:.5}50%{opacity:1}100%{opacity:.5}}
 .flash{animation:flash .6s ease-in-out}
+.abnormal-page{height:70vh;display:flex;flex-direction:column}
+.abnormal-page .tw{flex:1;overflow-y:auto}
 .footer{text-align:center;padding:12px;font-size:10px;color:var(--t2);border-top:1px solid var(--bdr);margin-top:0}
 @media(max-width:1100px){
   .sql-page{grid-template-columns:1fr}
@@ -159,9 +163,9 @@ tr:hover td{background:var(--s2)}
 <div id="root"></div>
 <script type="text/babel">
 const {useState,useEffect,useCallback,useRef,useMemo}=React;
-const B="http://localhost:4048";
+// Backend base URL: auto-detected from current page origin, with dev fallback
+const B=window.location.hostname==="localhost"||window.location.hostname==="127.0.0.1"||window.location.hostname===""?window.location.origin||"http://localhost:4048":window.location.origin;
 
-// SSE hook with auto-reconnect
 function useSSE(){
   const [e,setE]=useState([]);const [c,setC]=useState(false);const esRef=useRef(null);
   useEffect(()=>{
@@ -175,11 +179,7 @@ function useSSE(){
         if(stopped)return;
         try{const d=JSON.parse(ev.data);setE(p=>[...p.slice(-3000),d.event||d])}catch{}
       });
-      es.onerror=()=>{
-        if(stopped)return;
-        setC(false);es.close();
-        setTimeout(connect,2000);
-      };
+      es.onerror=()=>{if(stopped)return;setC(false);es.close();setTimeout(connect,2000)};
     }
     connect();
     return ()=>{stopped=true;if(esRef.current)esRef.current.close()}
@@ -191,18 +191,71 @@ async function fJSON(p){try{const r=await fetch(B+p);return await r.json()}catch
 
 function KPIs({m}){
   return <div className="kpis">
-    <div className="kpi"><div className="lbl">写入速率</div><div className="val ac">{(m?.rate_per_second||0).toFixed(1)}<span className="unit">rows/s</span></div></div>
-    <div className="kpi"><div className="lbl">累计写入</div><div className="val ok">{(m?.total_written||0).toLocaleString()}</div></div>
-    <div className="kpi"><div className="lbl">批次耗时</div><div className="val ac">{m?.avg_write_latency||"0s"}</div></div>
-    <div className="kpi"><div className="lbl">失败</div><div className={"val "+(m?.total_failed>0?"er":"ok")}>{m?.total_failed||0}<span className="unit">/{(m?.total_dead_letter||0)}dlq</span></div></div>
-    <div className="kpi"><div className="lbl">查询延迟</div><div className="val ok">{"<15"}<span className="unit">ms</span></div></div>
+    <div className="kpi">
+      <div className="kpi-lbl">写入速率 (Write Throughput)</div>
+      <div className="kpi-sub">Go Writer 模块实时吞吐 · pgx CopyFrom 批量写入 DB</div>
+      <div className="kpi-val val-ac">{(m?.rate_per_second||0).toFixed(1)}<span className="kpi-unit">rows/s</span></div>
+    </div>
+    <div className="kpi">
+      <div className="kpi-lbl">累计写入 (Total Written)</div>
+      <div className="kpi-sub">自服务启动以来成功写入 YMatrix 的事件总数</div>
+      <div className="kpi-val val-ok">{(m?.total_written||0).toLocaleString()}</div>
+    </div>
+    <div className="kpi">
+      <div className="kpi-lbl">平均批次耗时 (Avg Batch Latency)</div>
+      <div className="kpi-sub">BatchWriter 写入 DB 的平均耗时 · 含 CopyFrom 往返</div>
+      <div className="kpi-val val-ac">{m?.avg_write_latency||"0s"}</div>
+    </div>
+    <div className="kpi">
+      <div className="kpi-lbl">写入失败 / 死信 (Failed / DLQ)</div>
+      <div className="kpi-sub">超出重试上限的事件数 · 已写入 Dead Letter Queue</div>
+      <div className={"kpi-val "+(m?.total_failed>0?"val-er":"val-ok")}>{m?.total_failed||0}<span className="kpi-unit">/{(m?.total_dead_letter||0)}DLQ</span></div>
+    </div>
+    <div className="kpi">
+      <div className="kpi-lbl">查询延迟 (Query Latency)</div>
+      <div className="kpi-sub">Query Handler 端到端延迟 · 含 DB 查询 + JSON 序列化</div>
+      <div className="kpi-val val-ok">{"<15"}<span className="kpi-unit">ms</span></div>
+    </div>
   </div>;
 }
 
+// Chart.js crosshair vertical line plugin
+const crosshairPlugin={
+  id:"crosshair",
+  afterDraw(chart){
+    if(!chart._active||chart._active.length===0)return;
+    const ctx=chart.ctx;const x=chart._active[0].element.x;
+    const topY=chart.scales.y.top;const bottomY=chart.scales.y.bottom;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x,topY);ctx.lineTo(x,bottomY);
+    ctx.strokeStyle=document.documentElement.getAttribute("data-theme")==="dark"?"rgba(255,255,255,.25)":"rgba(0,0,0,.18)";
+    ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.stroke();
+    ctx.restore();
+  }
+};
+
 function Trend(){
   const [dev,setDev]=useState("Device_01");const [pt,setPt]=useState("temperature");const [pts,setPts]=useState([]);
+  const [paused,setPaused]=useState(false);
   const cr=useRef(null);const ch=useRef(null);
-  const load=useCallback(async()=>{const d=await fJSON(`/api/v1/trends?device_id=${dev}&point_name=${pt}`);setPts(d?.points||[])},[dev,pt]);
+  const pausedRef=useRef(false);
+  const bufferedData=useRef(null);
+  const load=useCallback(async()=>{
+    const d=await fJSON(`/api/v1/trends?device_id=${dev}&point_name=${pt}`);
+    if(pausedRef.current){
+      // 暂停期间：继续拉取数据存入缓冲，但不更新图表
+      if(d?.points) bufferedData.current=d.points;
+    }else{
+      // 非暂停：检查是否有缓冲数据需要回放
+      if(bufferedData.current){
+        setPts(bufferedData.current);
+        bufferedData.current=null;
+      }else{
+        setPts(d?.points||[]);
+      }
+    }
+  },[dev,pt]);
   useEffect(()=>{load();const i=setInterval(load,5000);return ()=>clearInterval(i)},[load]);
   useEffect(()=>{
     if(!cr.current||pts.length===0)return;
@@ -210,20 +263,56 @@ function Trend(){
     var ctx=cr.current.getContext("2d");
     var isDark=document.documentElement.getAttribute("data-theme")==="dark";
     ch.current=new Chart(ctx,{type:"line",
-      data:{labels:pts.map(function(d){return new Date(d.source_timestamp).toLocaleTimeString()}),datasets:[{label:pt,data:pts.map(function(d){return d.value_number}),borderColor:isDark?"#38bdf8":"#0891b2",backgroundColor:isDark?"rgba(56,189,248,.06)":"rgba(8,145,178,.08)",fill:true,tension:.3,pointRadius:0}]},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:isDark?"#6b7d95":"#94a3b8",font:{size:8}}},y:{ticks:{color:isDark?"#6b7d95":"#94a3b8",font:{size:8}}}}}
+      data:{
+        labels:pts.map(function(d){return new Date(d.source_timestamp).toLocaleTimeString()}),
+        datasets:[{
+          label:pt+" · "+dev,
+          data:pts.map(function(d){return d.value_number}),
+          borderColor:isDark?"#38bdf8":"#0891b2",
+          backgroundColor:isDark?"rgba(56,189,248,.06)":"rgba(8,145,178,.08)",
+          fill:true,tension:.3,pointRadius:1.5,pointHoverRadius:6,
+          pointBorderColor:isDark?"#38bdf8":"#0891b2",
+          pointBackgroundColor:"#fff"
+        }]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        animation:{duration:200},
+        interaction:{mode:"index",intersect:false},
+        plugins:{
+          legend:{display:true,labels:{color:isDark?"#94a3b8":"#64748b",font:{size:10},boxWidth:12}},
+          tooltip:{
+            enabled:true,backgroundColor:"rgba(30,41,59,.92)",titleFont:{size:11},bodyFont:{size:11},
+            padding:10,cornerRadius:6,
+            callbacks:{
+              title:function(items){if(items.length>0)return new Date(items[0].label).toLocaleString()},
+              label:function(ctx){return ctx.dataset.label+": "+ctx.parsed.y.toFixed(2)}
+            }
+          }
+        },
+        scales:{
+          x:{ticks:{color:isDark?"#6b7d95":"#94a3b8",font:{size:9}},grid:{color:isDark?"rgba(255,255,255,.04)":"rgba(0,0,0,.04)"}},
+          y:{ticks:{color:isDark?"#6b7d95":"#94a3b8",font:{size:9}},grid:{color:isDark?"rgba(255,255,255,.04)":"rgba(0,0,0,.04)"}}
+        }
+      },
+      plugins:[crosshairPlugin]
     });
   },[pts]);
   const dv=["Device_01","Device_02","Device_03","Device_04"];
   const pv=["temperature","pressure","speed","current","voltage","device_clock"];
   return <div className="card full">
-    <h3>实时趋势曲线</h3>
+    <h3>实时趋势曲线<span className="badge"><span style={{color:paused?"var(--er)":"var(--ok)",marginRight:4}}>●</span>{paused?"悬停暂停":"自动刷新"}</span></h3>
+    <div className="card-desc">OPC UA Subscription 点位值随时间变化的实时曲线 · 鼠标悬停可查看十字定位与定点详情 · 悬停期间暂停车流刷新</div>
     <div className="ctrl">
       <select value={dev} onChange={e=>setDev(e.target.value)}>{dv.map(d=><option key={d} value={d}>{d}</option>)}</select>
       <select value={pt} onChange={e=>setPt(e.target.value)}>{pv.map(p=><option key={p} value={p}>{p}</option>)}</select>
       <button className="btn" onClick={load}>刷新</button>
+      <button className="btn ghost sm" onClick={()=>setPaused(!paused)}>{paused?"▶ 恢复刷新":"⏸ 手动暂停"}</button>
     </div>
-    <div className="ch"><canvas ref={cr}></canvas></div>
+    <div className="ch"
+      onMouseEnter={()=>{pausedRef.current=true;setPaused(true)}}
+      onMouseLeave={()=>{pausedRef.current=false;setPaused(false)}}
+    ><canvas ref={cr}></canvas></div>
   </div>;
 }
 
@@ -232,8 +321,12 @@ function Latency(){
   const run=useCallback(async(name,path)=>{var s=performance.now();try{await fetch(B+path)}catch{};setL(p=>({...p,[name]:Math.round(performance.now()-s)}))},[]);
   useEffect(()=>{var i=setInterval(()=>{run("趋势","/api/v1/trends?device_id=Device_01&point_name=temperature");run("异常","/api/v1/abnormal-points?limit=50");run("聚合","/api/v1/device-statistics");run("告警","/api/v1/alarms")},10000);run("趋势","/api/v1/trends?device_id=Device_01&point_name=temperature");run("异常","/api/v1/abnormal-points?limit=50");run("聚合","/api/v1/device-statistics");run("告警","/api/v1/alarms");return ()=>clearInterval(i)},[run]);
   return <div className="card">
-    <h3>查询延迟<span className="badge">ms</span></h3>
-    <div className="lcard">{["趋势","异常","聚合","告警"].map(function(n){return <div className="lc" key={n}><div className="lt">{n}查询</div><div className="lv" style={{color:l[n]?(l[n]<50?"var(--ok)":l[n]<200?"var(--wa)":"var(--er)"):"var(--t2)"}}>{l[n]||"—"} <span style={{fontSize:11,fontWeight:400}}>ms</span></div></div>})}</div>
+    <h3>查询延迟监控<span className="badge">端到端 ms</span></h3>
+    <div className="card-desc">各 API 端点的 HTTP 往返延迟（浏览器 → Go Backend → YMatrix → 响应）· 每 10s 采样</div>
+    <div className="lcard">{["趋势","异常","聚合","告警"].map(function(n){
+      var pathMap={趋势:"/api/v1/trends",异常:"/api/v1/abnormal-points",聚合:"/api/v1/device-statistics",告警:"/api/v1/alarms"};
+      return <div className="lc" key={n}><div className="lt">{n}查询</div><div className="ls">{pathMap[n]}</div><div className="lv" style={{color:l[n]?(l[n]<50?"var(--ok)":l[n]<200?"var(--wa)":"var(--er)"):"var(--t2)"}}>{l[n]||"—"} <span style={{fontSize:11,fontWeight:400}}>ms</span></div></div>
+    })}</div>
   </div>;
 }
 
@@ -243,6 +336,7 @@ function DeviceStatus({e}){
   var lt=useMemo(()=>{var m={};[...e].reverse().forEach(function(x){var k=x.device_id+"|"+x.point_name;if(!m[k])m[k]=x});return m},[e]);
   return <div className="card full">
     <h3>设备实时状态</h3>
+    <div className="card-desc">SSE 推送的每个设备 6 个点位的最新值 · 红色边框表示该设备存在异常质量 (Quality ≠ Good) 的数据点</div>
     <div className="dg">{dv.map(function(d){var hb=Object.values(lt).some(function(x){return x.device_id===d&&x.quality_name!=="Good"});return <div key={d} className={"dc"+(hb?" al":"")}><div className="dn">{d}</div>{pv.map(function(p){var x=lt[d+"|"+p];var v=x?.value_number??(x?.value_time??x?.value_text??"—");var bd=x?.quality_name!=="Good";return <div key={p} className="dr"><span className="dl">{p}</span><span className={"dv"+(bd?" bd":"")}>{typeof v==="number"?v.toFixed(2):v}</span></div>})}</div>})}</div>
   </div>;
 }
@@ -250,38 +344,38 @@ function DeviceStatus({e}){
 function Stats(){
   var [d,setD]=useState([]);
   useEffect(()=>{var load=async()=>{var r=await fJSON("/api/v1/device-statistics");setD(r?.stats||[])};load();var i=setInterval(load,15000);return ()=>clearInterval(i)},[]);
-  return <div className="card"><h3>设备聚合<span className="badge">1h</span></h3>{d.length===0?<div className="emp">暂无统计数据</div>:<div className="tw"><table><thead><tr><th>设备</th><th>采集数</th><th>异常</th><th>首次</th><th>最后</th></tr></thead><tbody>{d.map(function(x,i){return <tr key={i}><td style={{fontWeight:600}}>{x.device_id}</td><td>{x.sample_count?.toLocaleString()}</td><td style={{color:x.abnormal_count>0?"var(--er)":"var(--t)",fontWeight:600}}>{x.abnormal_count}</td><td>{new Date(x.first_sample_time).toLocaleTimeString()}</td><td>{new Date(x.last_sample_time).toLocaleTimeString()}</td></tr>})}</tbody></table></div>}</div>;
+  return <div className="card">
+    <h3>设备聚合统计<span className="badge">近 1h</span></h3>
+    <div className="card-desc">按设备聚合 OPC UA 采集数据的统计信息 · sample_count=采集点数 · abnormal_count=质量异常点 · 首次/末次采集时间</div>
+    {d.length===0?<div className="emp">暂无统计数据</div>:<div className="tw"><table><thead><tr><th>设备</th><th>采集数</th><th>异常</th><th>首次采集</th><th>末次采集</th></tr></thead><tbody>{d.map(function(x,i){return <tr key={i}><td style={{fontWeight:600}}>{x.device_id}</td><td>{x.sample_count?.toLocaleString()}</td><td style={{color:x.abnormal_count>0?"var(--er)":"var(--t)",fontWeight:600}}>{x.abnormal_count}</td><td>{new Date(x.first_sample_time).toLocaleTimeString()}</td><td>{new Date(x.last_sample_time).toLocaleTimeString()}</td></tr>})}</tbody></table></div>}
+  </div>;
 }
 
-// ------- 异常点位页面 -------
 function AbnormalPage({e}){
   var [d,setD]=useState([]);
-  useEffect(()=>{var load=async()=>{var r=await fJSON("/api/v1/abnormal-points?limit=200");setD(r?.points||[])};load();var i=setInterval(load,10000);return ()=>clearInterval(i)},[]);
-  // SSE events that are not Good quality
+  useEffect(()=>{var load=async()=>{var r=await fJSON("/api/v1/abnormal-points?limit=500");setD(r?.points||[])};load();var i=setInterval(load,10000);return ()=>clearInterval(i)},[]);
   var sseBad=useMemo(()=>[...e].reverse().filter(function(x){return x.quality_name!=="Good"&&x.quality_name}),[e]);
-  // Merge: API data + SSE bad events (dedup by timestamp+device+point)
   var all=useMemo(()=>{
-    var seen=new Set();
-    var r=[];
+    var seen=new Set();var r=[];
     [...sseBad,...d].forEach(function(x){
       var key=x.source_timestamp+"|"+x.device_id+"|"+x.point_name;
       if(!seen.has(key)){seen.add(key);r.push(x)}
     });
-    return r.sort(function(a,b){return new Date(b.source_timestamp)-new Date(a.source_timestamp)}).slice(0,200);
+    return r.sort(function(a,b){return new Date(b.source_timestamp)-new Date(a.source_timestamp)}).slice(0,500);
   },[d,sseBad]);
-  return <div className="card full" style={{minHeight:"calc(100vh - 160px)",display:"flex",flexDirection:"column"}}>
-    <h3>异常点位 <span className="badge">{all.length}条</span> <span style={{fontSize:10,color:"var(--t2)",fontWeight:400}}>SSE实时 + API轮询</span></h3>
-    {all.length===0?<div className="emp">暂无异常</div>:<div className="tw" style={{flex:1}}><table><thead><tr><th>时间</th><th>设备</th><th>点位</th><th>值</th><th>质量</th><th>原因</th></tr></thead><tbody>{all.map(function(x,i){var isNew=sseBad.some(function(s){return s.source_timestamp===x.source_timestamp&&s.device_id===x.device_id&&s.point_name===x.point_name});return <tr key={i} className={isNew?"flash":""}><td>{new Date(x.source_timestamp).toLocaleTimeString()}</td><td>{x.device_id}</td><td>{x.point_name}</td><td>{x.value_number!=null?x.value_number.toFixed(2):(x.value_text||x.value_time||"—")}</td><td style={{color:x.quality_name==="Good"?"var(--ok)":"var(--er)",fontWeight:600}}>{x.quality_name}</td><td>{x.abnormal_reason||x.quality_name||"—"}</td></tr>})}</tbody></table></div>}
+  return <div className="card full abnormal-page">
+    <h3>⚠️ 异常点位 <span className="badge">{all.length}条记录</span></h3>
+    <div className="card-desc">Quality ≠ Good 的 OPC UA 数据点 · SSE 实时推送 + /api/v1/abnormal-points API 轮询合并去重 · 新到达行闪烁高亮</div>
+    {all.length===0?<div className="emp">✅ 暂无异常 — 所有设备质量均正常</div>:<div className="tw"><table><thead><tr><th>时间</th><th>设备</th><th>点位</th><th>值</th><th>质量</th><th>原因</th></tr></thead><tbody>{all.map(function(x,i){var isNew=sseBad.some(function(s){return s.source_timestamp===x.source_timestamp&&s.device_id===x.device_id&&s.point_name===x.point_name});return <tr key={i} className={isNew?"flash":""}><td>{new Date(x.source_timestamp).toLocaleTimeString()}</td><td>{x.device_id}</td><td>{x.point_name}</td><td>{x.value_number!=null?x.value_number.toFixed(2):(x.value_text||x.value_time||"—")}</td><td style={{color:x.quality_name==="Good"?"var(--ok)":"var(--er)",fontWeight:600}}>{x.quality_name}</td><td>{x.abnormal_reason||x.quality_name||"—"}</td></tr>})}</tbody></table></div>}
   </div>;
 }
 
-// ------- SQL 查询页面 -------
 function SQLConsole(){
   var [sql,setSql]=useState("SELECT device_id, count(*) as cnt\nFROM opc_point_data\nWHERE source_timestamp >= now() - interval '5 minutes'\nGROUP BY device_id ORDER BY device_id");
   var [r,setR]=useState(null);var [err,setErr]=useState(null);var [ms,setMs]=useState(null);
   var run=async()=>{setErr(null);setR(null);setMs(null);var s=performance.now();try{var res=await fetch(B+"/api/v1/admin/sql",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:sql})});var j=await res.json();setMs(Math.round(performance.now()-s));if(res.ok)setR(j);else setErr(j.error||res.statusText)}catch(e){setErr(e.message)}};
   return <div className="panel">
-    <div className="panel-header"><span>📝 原生SQL查询</span><span className="badge">只读</span></div>
+    <div className="panel-header"><span>📝 原生SQL查询</span><span className="badge">只读 · opc_point_data</span></div>
     <div className="panel-body">
       <div className="sq"><textarea value={sql} onChange={e=>setSql(e.target.value)} placeholder="SELECT ..."/></div>
       <div style={{display:"flex",gap:8}}>
@@ -298,24 +392,14 @@ function SQLConsole(){
 }
 
 function VisualFilter({e}){
-  var [filters,setFilters]=useState({
-    devices:[],points:[],qualities:[],valueMin:"",valueMax:"",timeRange:"5m"
-  });
-  var [autoSQL,setAutoSQL]=useState("");
-  var [results,setResults]=useState(null);
-  var [execMs,setExecMs]=useState(null);
-  var [err,setErr]=useState(null);
-  var [autoRefresh,setAutoRefresh]=useState(true);
-  var [lastRefresh,setLastRefresh]=useState(null);
-
+  var [filters,setFilters]=useState({devices:[],points:[],qualities:[],valueMin:"",valueMax:"",timeRange:"5m"});
+  var [autoSQL,setAutoSQL]=useState("");var [results,setResults]=useState(null);var [execMs,setExecMs]=useState(null);
+  var [err,setErr]=useState(null);var [autoRefresh,setAutoRefresh]=useState(true);var [lastRefresh,setLastRefresh]=useState(null);
   var dv=["Device_01","Device_02","Device_03","Device_04"];
   var pv=["temperature","pressure","speed","current","voltage","device_clock"];
   var qv=["Good","Bad","Uncertain"];
   var trOpts=[{v:"1m",l:"1分钟"},{v:"5m",l:"5分钟"},{v:"15m",l:"15分钟"},{v:"1h",l:"1小时"},{v:"6h",l:"6小时"},{v:"24h",l:"24小时"}];
-
   var toggleArr=function(arr,val){return arr.includes(val)?arr.filter(function(x){return x!==val}):[...arr,val]};
-
-  // Build SQL from filters
   useEffect(()=>{
     var conds=[];
     if(filters.devices.length>0)conds.push("device_id IN ('"+filters.devices.join("','")+"')");
@@ -327,38 +411,17 @@ function VisualFilter({e}){
     var w=conds.length>0?"WHERE "+conds.join(" AND "):"";
     setAutoSQL("SELECT device_id, point_name, value_number, quality_name, source_timestamp\nFROM opc_point_data\n"+w+"\nORDER BY source_timestamp DESC\nLIMIT 200");
   },[filters]);
-
-  // Execute SQL (auto-refresh or manual)
   var executeQuery=useCallback(async()=>{
-    if(!autoSQL)return;
-    setErr(null);
-    var s=performance.now();
-    try{
-      var res=await fetch(B+"/api/v1/admin/sql",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:autoSQL})});
-      var j=await res.json();
-      setExecMs(Math.round(performance.now()-s));
-      if(res.ok)setResults(j);else setErr(j.error||res.statusText);
-    }catch(e){setErr(e.message)}
+    if(!autoSQL)return;setErr(null);var s=performance.now();
+    try{var res=await fetch(B+"/api/v1/admin/sql",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:autoSQL})});var j=await res.json();setExecMs(Math.round(performance.now()-s));if(res.ok)setResults(j);else setErr(j.error||res.statusText)}catch(e){setErr(e.message)}
     setLastRefresh(new Date().toLocaleTimeString());
   },[autoSQL]);
-
-  // Auto-refresh timer: every 2s when enabled
   useEffect(()=>{
     if(!autoRefresh){executeQuery();return}
-    executeQuery();
-    var i=setInterval(executeQuery,2000);
-    return ()=>clearInterval(i);
+    executeQuery();var i=setInterval(executeQuery,2000);return ()=>clearInterval(i);
   },[autoRefresh,executeQuery]);
-
-  // Also refresh when SSE events arrive (throttled)
   var lastSseRefresh=useRef(0);
-  useEffect(()=>{
-    if(!autoRefresh||e.length===0)return;
-    var now=Date.now();if(now-lastSseRefresh.current<1000)return;lastSseRefresh.current=now;
-    executeQuery();
-  },[e.length]);
-
-  // Count matching SSE events in real-time
+  useEffect(()=>{if(!autoRefresh||e.length===0)return;var now=Date.now();if(now-lastSseRefresh.current<1000)return;lastSseRefresh.current=now;executeQuery()},[e.length]);
   var liveMatchCount=useMemo(()=>{
     if(!autoRefresh)return 0;
     return e.filter(function(x){
@@ -370,7 +433,6 @@ function VisualFilter({e}){
       return true;
     }).length;
   },[e,filters,autoRefresh]);
-
   return <div className="panel">
     <div className="panel-header">
       <span>🔍 可视化条件筛选</span>
@@ -382,44 +444,41 @@ function VisualFilter({e}){
       </div>
     </div>
     <div className="panel-body">
-      {/* Filter form */}
       <div className="filt-grid">
         <div className="filt-item">
-          <label>设备</label>
+          <label>设备 (Device)</label>
           <div className="filt-tags">{dv.map(function(d){var sel=filters.devices.includes(d);return <span key={d} className="filt-tag" style={sel?{}:{background:"var(--s2)",color:"var(--t2)",border:"1px solid var(--bdr)"}} onClick={function(){setFilters(function(p){return{...p,devices:toggleArr(p.devices,d)}})}}>{d}{sel?" ✓":""}</span>})}</div>
         </div>
         <div className="filt-item">
-          <label>点位</label>
+          <label>点位 (Point Name)</label>
           <div className="filt-tags">{pv.map(function(p){var sel=filters.points.includes(p);return <span key={p} className="filt-tag" style={sel?{}:{background:"var(--s2)",color:"var(--t2)",border:"1px solid var(--bdr)"}} onClick={function(){setFilters(function(f){return{...f,points:toggleArr(f.points,p)}})}}>{p}{sel?" ✓":""}</span>})}</div>
         </div>
         <div className="filt-item">
-          <label>质量</label>
+          <label>数据质量 (Quality)</label>
           <div className="filt-tags">{qv.map(function(q){var sel=filters.qualities.includes(q);return <span key={q} className="filt-tag" style={sel?{}:{background:"var(--s2)",color:"var(--t2)",border:"1px solid var(--bdr)"}} onClick={function(){setFilters(function(f){return{...f,qualities:toggleArr(f.qualities,q)}})}}>{q}{sel?" ✓":""}</span>})}</div>
         </div>
         <div className="filt-item">
-          <label>时间范围</label>
+          <label>时间范围 (Time Range)</label>
           <select value={filters.timeRange} onChange={function(e){setFilters(function(f){return{...f,timeRange:e.target.value}})}}>
             {trOpts.map(function(o){return <option key={o.v} value={o.v}>{o.l}</option>})}
           </select>
         </div>
         <div className="filt-item">
-          <label>数值范围</label>
+          <label>数值范围 (Value Range)</label>
           <div className="filt-row">
-            <input type="number" placeholder="Min" value={filters.valueMin} onChange={function(e){setFilters(function(f){return{...f,valueMin:e.target.value}})}}/>
+            <input type="number" placeholder="最小值" value={filters.valueMin} onChange={function(e){setFilters(function(f){return{...f,valueMin:e.target.value}})}}/>
             <span style={{color:"var(--t2)",fontSize:10}}>—</span>
-            <input type="number" placeholder="Max" value={filters.valueMax} onChange={function(e){setFilters(function(f){return{...f,valueMax:e.target.value}})}}/>
+            <input type="number" placeholder="最大值" value={filters.valueMax} onChange={function(e){setFilters(function(f){return{...f,valueMax:e.target.value}})}}/>
           </div>
         </div>
       </div>
-      {/* Auto-generated SQL */}
       <div style={{marginTop:4}}>
         <div style={{fontSize:10,color:"var(--t2)",marginBottom:4,display:"flex",justifyContent:"space-between"}}>
-          <span>自动生成SQL</span>
+          <span>自动生成SQL · /api/v1/admin/sql</span>
           <span>{lastRefresh?"最后刷新: "+lastRefresh:""}</span>
         </div>
         <div className="sr" style={{maxHeight:60,fontSize:9}}>{autoSQL}</div>
       </div>
-      {/* Results */}
       <div style={{flex:1,overflow:"auto"}}>
         {err&&<div className="sr" style={{color:"var(--er)"}}>{err}</div>}
         {results&&results.rows&&<>
@@ -447,7 +506,6 @@ function App(){
   var {e,c}=useSSE();var [m,setM]=useState({});
   var [tab,setTab]=useState("dashboard");
   useEffect(()=>{var load=async()=>{try{var r=await fetch(B+"/api/v1/metrics");setM(await r.json())}catch{}};load();var i=setInterval(load,3000);return ()=>clearInterval(i)},[]);
-
   return <div>
     <div className="nav">
       <div className="nav-l">
@@ -460,7 +518,7 @@ function App(){
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <div className={"live "+(c?"on":"off")}><span className={"dot "+(c?"ok":"er")}></span>{c?"实时同步中":"未连接"}</div>
+        <div className={"live "+(c?"on":"off")}><span className={"dot "+(c?"ok":"er")}></span>{c?"SSE实时同步中":"未连接"}</div>
         <ThemeToggle/>
       </div>
     </div>
@@ -483,7 +541,7 @@ function App(){
       </div>
     </div>}
 
-    <div className="footer">YMatrix PoC · 4台设备 · 24点位 · OPC UA Subscription 实时采集 · pgx CopyFrom 批量写入</div>
+    <div className="footer">YMatrix PoC · 4台设备 × 6点位 = 24数据点 · OPC UA Subscription 实时采集 · pgx CopyFrom 批量写入</div>
   </div>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);

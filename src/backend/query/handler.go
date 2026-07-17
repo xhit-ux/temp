@@ -94,6 +94,10 @@ func (h *Handler) handleSQLConsole(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	cols := rows.FieldDescriptions()
+	colNames := make([]string, len(cols))
+	for i, col := range cols {
+		colNames[i] = string(col.Name)
+	}
 	var results []map[string]interface{}
 	for rows.Next() {
 		vals, _ := rows.Values()
@@ -106,7 +110,7 @@ func (h *Handler) handleSQLConsole(w http.ResponseWriter, r *http.Request) {
 	elapsed := time.Since(start).Milliseconds()
 	w.Header().Set("Content-Type","application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"columns": cols,
+		"columns": colNames,
 		"rows": results,
 		"row_count": len(results),
 		"latency_ms": elapsed,

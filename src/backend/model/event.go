@@ -47,11 +47,9 @@ func (e *IngestEvent) Validate() error {
 		count++
 	}
 	if count != 1 {
-		// Auto-populate if needed for resilience
-		if count == 0 && e.DataType == "Double" {
-			v := 0.0
-			e.ValueNumber = &v
-		}
+		// Leave value fields as-is.  count==0 means the collector sent no value,
+		// which is semantically different from value=0 (e.g. sensor disconnected vs. machine stopped).
+		// The database accepts NULL in value_number/value_text/value_time columns.
 	}
 
 	return nil

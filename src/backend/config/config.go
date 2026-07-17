@@ -17,6 +17,7 @@ type Config struct {
 	DBPassword string
 	DBDatabase string
 
+	ServerHost string
 	ServerPort int
 
 	// Batch writer settings
@@ -59,6 +60,12 @@ func Load(envPath string) (*Config, error) {
 	cfg.DBUser = requireEnv("DB_USERNAME")
 	cfg.DBPassword = requireEnv("DB_PASSWORD")
 	cfg.DBDatabase = requireEnv("DB_DATABASE")
+
+	// Server host (optional, defaults to localhost)
+	cfg.ServerHost = os.Getenv("SERVER_HOST")
+	if cfg.ServerHost == "" {
+		cfg.ServerHost = "localhost"
+	}
 
 	var err error
 	cfg.DBPort, err = requireIntEnv("DB_PORT")
@@ -135,7 +142,7 @@ func (c *Config) DSN() string {
 
 // HTTPAddress returns the server listen address.
 func (c *Config) HTTPAddress() string {
-	return fmt.Sprintf(":%d", c.ServerPort)
+	return fmt.Sprintf("%s:%d", c.ServerHost, c.ServerPort)
 }
 
 func requireEnv(key string) string {

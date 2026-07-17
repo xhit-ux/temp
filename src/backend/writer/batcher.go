@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"strings"
 	"time"
 
 	"opc2ymatrix/deadletter"
@@ -337,11 +338,11 @@ func (bw *BatchWriter) writeSingleWithRetry(ctx context.Context, event model.Ing
 }
 
 // copyFrom performs a single pgx.CopyFrom batch insert.
+// Validation is performed at ingest time (handler/ingest.go); no need to re-validate here.
 func (bw *BatchWriter) copyFrom(ctx context.Context, batch []model.IngestEvent, batchID string) error {
 	rows := make([][]interface{}, len(batch))
-	for i, event := range batch {
-		event.Validate()
-		rows[i] = event.Row(batchID)
+	for i := range batch {
+		rows[i] = batch[i].Row(batchID)
 	}
 
 	_, err := bw.db.CopyFrom(
@@ -453,18 +454,43 @@ func (bw *BatchWriter) Wait() {
 }
 
 // isRetryable determines whether a database error is worth retrying.
+// Uses PgError SQLSTATE classification when available, falls back to string matching.
 func isRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
+
+	// Check for pgconn.PgError with known retryable SQLSTATE codes
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		// Class 08 — Connection Exception
+		case "08000", "08003", "08006", "08001", "08004":
+			return true
+		// Class 40 — Transaction Rollback (deadlock, serialization)
+		case "40001", "40P01":
+			return true
+		// Class 53 — Insufficient Resources
+		case "53300", "53400":
+			return true
+		// Class 57 — Operator Intervention
+		case "57P01", "57P02", "57P03":
+			return true
+		// Class 25 — Invalid Transaction State
+		case "25001", "25P02":
+			return true
+		default:
+			return false
+		}
+	}
+
+	// Fallback: string-based matching for non-PgError errors (e.g. connection errors)
 	errStr := err.Error()
 	retryablePatterns := []string{
 		"connection refused",
 		"connection reset",
 		"connection closed",
 		"timeout",
-		"deadlock",
-		"could not serialize",
 		"too many clients",
 		"server closed the connection",
 		"i/o timeout",
@@ -473,20 +499,7 @@ func isRetryable(err error) bool {
 		"conn busy",
 	}
 	for _, pattern := range retryablePatterns {
-		if contains(errStr, pattern) {
-			return true
-		}
-	}
-	return false
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && search(s, substr)
-}
-
-func search(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
+		if strings.Contains(errStr, pattern) {
 			return true
 		}
 	}

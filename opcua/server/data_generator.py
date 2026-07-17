@@ -23,6 +23,7 @@ class DeviceRuntimeState:
     values: dict[str, float] = field(default_factory=dict)
     speed_next_change_at: float = 0.0
     offline_until: float = 0.0
+    offline_cooldown_until: float = 0.0
 
 
 class DataGenerator:
@@ -70,19 +71,30 @@ class DataGenerator:
         nodes = self.device_nodes[device_id]
         state = self.states[device_id]
 
-        if self._should_enter_offline(now_monotonic):
-            duration = float(self.config.simulation.get("offline", {}).get("duration_seconds", 8))
-            state.offline_until = now_monotonic + duration
-            LOGGER.warning("Device %s enters simulated offline state for %.1fs.", device_id, duration)
+        # Offline cooldown: prevent immediate re-entry after recovering from offline
+        if now_monotonic >= state.offline_cooldown_until:
+            if self._should_enter_offline(now_monotonic):
+                duration = float(self.config.simulation.get("offline", {}).get("duration_seconds", 8))
+                cooldown = float(self.config.simulation.get("offline", {}).get("cooldown_seconds", 30))
+                state.offline_until = now_monotonic + duration
+                state.offline_cooldown_until = now_monotonic + duration + cooldown
+                LOGGER.warning("Device %s enters simulated offline state for %.1fs.", device_id, duration)
 
         if now_monotonic < state.offline_until:
             return
 
-        for point_name, variable_node in nodes.variables.items():
+        # Capture a single timestamp for this tick so all 6 points on the device
+        # share the same SourceTimestamp and ServerTimestamp.
+        now_utc = datetime.now(timezone.utc)
+
+        # Process points in dependency order: compute speed (and other independent points)
+        # before correlated_current which reads speed from state.values.
+        ordered_points = list(nodes.variables.items())
+        for point_name, variable_node in ordered_points:
             point_cfg = self.config.points[point_name]
             value = self._next_value(nodes.device, state, point_name, point_cfg, now_monotonic)
             status_code = self._next_status_code()
-            data_value = make_data_value(value, point_cfg["data_type"], status_code)
+            data_value = make_data_value(value, point_cfg["data_type"], status_code, now_utc)
             await variable_node.write_value(data_value)
 
     def _initial_state(self, device: DeviceConfig) -> DeviceRuntimeState:

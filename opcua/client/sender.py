@@ -58,12 +58,12 @@ class DeadLetterWriter:
 
     def __init__(self, base_dir: Path = DEFAULT_DEAD_LETTER_DIR) -> None:
         self.base_dir = Path(base_dir)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
 
     def _file_path(self) -> Path:
         """Generate a date-based file path."""
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        self.base_dir.mkdir(parents=True, exist_ok=True)
         return self.base_dir / f"dlq-{date_str}.ndjson"
 
     async def write(self, events: Sequence[dict[str, Any]], reason: str) -> None:
@@ -112,6 +112,7 @@ class EventSender:
 
     Features:
     - Batch or single event submission to /api/v1/ingest/events
+    - Long-lived aiohttp.ClientSession with connection pooling
     - Exponential backoff with jitter for retries
     - Local dead letter file fallback when all retries exhausted
     - Respects 429/503 backpressure responses
@@ -133,6 +134,32 @@ class EventSender:
         self.request_timeout = request_timeout
         self.backoff = BackoffStrategy(base_delay=base_delay)
         self.dead_letter = DeadLetterWriter(base_dir=dead_letter_dir)
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def _ensure_session(self) -> aiohttp.ClientSession:
+        """Lazily create and return a shared ClientSession with connection pooling."""
+        if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(
+                connect=self.connect_timeout,
+                total=self.request_timeout,
+            )
+            connector = aiohttp.TCPConnector(
+                limit=10,                 # max concurrent connections
+                limit_per_host=5,          # max concurrent to same host
+                ttl_dns_cache=300,         # dns cache 5 minutes
+                force_close=False,
+            )
+            self._session = aiohttp.ClientSession(
+                timeout=timeout,
+                connector=connector,
+            )
+        return self._session
+
+    async def close(self) -> None:
+        """Close the shared ClientSession."""
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def send_event(self, event: dict[str, Any]) -> bool:
         """Send a single event to the backend. Returns True on success."""
@@ -147,50 +174,62 @@ class EventSender:
         if not events:
             return True
 
+        session = await self._ensure_session()
         payload = json.dumps(events, ensure_ascii=False)
         endpoint = f"{self.backend_url}/api/v1/ingest/events"
         last_error: Optional[str] = None
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(
-                        connect=self.connect_timeout,
-                        total=self.request_timeout,
-                    )
-                ) as session:
-                    async with session.post(
-                        endpoint,
-                        data=payload,
-                        headers={"Content-Type": "application/json"},
-                    ) as response:
-                        if response.status in (200, 201, 204):
-                            # Log at INFO so throughput is visible; uses modulo to avoid log flood
-                            if attempt == 1 and len(events) > 0:
-                                LOGGER.info("Sent %d events successfully", len(events))
-                            else:
-                                LOGGER.debug("Sent %d events successfully (attempt %d)", len(events), attempt)
-                            return True
-
-                        # Backpressure: queue full or service unavailable
-                        if response.status in (429, 503):
-                            LOGGER.warning(
-                                "Backend returned %d, backing off (attempt %d/%d)",
-                                response.status,
-                                attempt,
-                                self.max_retries,
-                            )
-                            last_error = f"HTTP {response.status}: backend busy"
+                async with session.post(
+                    endpoint,
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                ) as response:
+                    if response.status in (200, 201, 204):
+                        if attempt == 1 and len(events) > 0:
+                            LOGGER.info("Sent %d events successfully", len(events))
                         else:
-                            body = await response.text()
+                            LOGGER.debug("Sent %d events successfully (attempt %d)", len(events), attempt)
+                        return True
+
+                    # 207 Multi-Status: backend accepted some but dropped others
+                    if response.status == 207:
+                        body = await response.text()
+                        try:
+                            body_json = json.loads(body)
+                            dropped = body_json.get("dropped", 0)
+                            accepted = body_json.get("accepted", 0)
                             LOGGER.warning(
-                                "Backend returned %d: %s (attempt %d/%d)",
-                                response.status,
-                                body[:200],
-                                attempt,
-                                self.max_retries,
+                                "Backend returned 207: accepted=%d dropped=%d (attempt %d/%d)",
+                                accepted, dropped, attempt, self.max_retries,
                             )
-                            last_error = f"HTTP {response.status}: {body[:200]}"
+                            last_error = f"partial success: {accepted} accepted, {dropped} dropped"
+                        except json.JSONDecodeError:
+                            last_error = f"HTTP 207: {body[:200]}"
+                        # Treat as failure so collector writes to dead-letter for safety
+                        # The accepted events are already in the backend queue, but
+                        # we re-send the whole batch (idempotent via event_id ON CONFLICT)
+
+                    # Backpressure: queue full or service unavailable
+                    if response.status in (429, 503):
+                        LOGGER.warning(
+                            "Backend returned %d, backing off (attempt %d/%d)",
+                            response.status,
+                            attempt,
+                            self.max_retries,
+                        )
+                        last_error = f"HTTP {response.status}: backend busy"
+                    else:
+                        body = await response.text()
+                        LOGGER.warning(
+                            "Backend returned %d: %s (attempt %d/%d)",
+                            response.status,
+                            body[:200],
+                            attempt,
+                            self.max_retries,
+                        )
+                        last_error = f"HTTP {response.status}: {body[:200]}"
 
             except asyncio.TimeoutError:
                 LOGGER.warning("Request timed out (attempt %d/%d)", attempt, self.max_retries)

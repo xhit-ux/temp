@@ -87,18 +87,15 @@ func (h *IngestHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		h.metrics.RecordDropped(int64(dropped))
 	}
 
-	if accepted == 0 && dropped > 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   "queue full",
-			"dropped": dropped,
-		})
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	status := http.StatusOK
+	if accepted == 0 && dropped > 0 {
+		status = http.StatusTooManyRequests
+	} else if dropped > 0 {
+		// Partial success — signal to collector that some events were lost
+		status = 207 // Multi-Status
+	}
+	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"accepted": accepted,
 		"dropped":  dropped,

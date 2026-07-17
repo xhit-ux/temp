@@ -74,6 +74,8 @@ func main() {
 	}
 
 	var wg sync.WaitGroup
+	// Track all writer instances for ordered shutdown
+	var allWriters []*writer.BatchWriter
 
 	// Acquire a dedicated connection for the priority writer (used by replayer too)
 	prioConn, err := db.Pool.Acquire(ctx)
@@ -91,6 +93,7 @@ func main() {
 		pgxConn := dbConn.Conn()
 
 		bw := writer.NewBatchWriter(normalCh, pgxConn, m, dlq, batchCfg)
+		allWriters = append(allWriters, bw)
 
 		wg.Add(1)
 		go func(idx int) {
@@ -104,6 +107,7 @@ func main() {
 
 	// Start priority writer (single worker with dedicated connection)
 	prioWriter := writer.NewPriorityWriter(priorityCh, prioPgx, m, dlq, batchCfg)
+	allWriters = append(allWriters, prioWriter)
 
 	wg.Add(1)
 	go func() {
@@ -268,10 +272,18 @@ func main() {
 	sig := <-sigCh
 	log.Printf("[Main] Received signal %v, initiating graceful shutdown...", sig)
 
-	// Cancel context to stop writers + replayer
+	// Step 1: Stop writers — they flush remaining batches with live context
+	log.Println("[Main] Stopping writers...")
+	for _, bw := range allWriters {
+		bw.Stop()
+	}
+	// Wait briefly for writers to finish flushing
+	time.Sleep(500 * time.Millisecond)
+
+	// Step 2: Cancel root context (stops replayer, signals remaining goroutines)
 	cancel()
 
-	// Shutdown HTTP server with timeout
+	// Step 3: Shutdown HTTP server with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
@@ -279,14 +291,11 @@ func main() {
 		log.Printf("[Main] HTTP server forced to shutdown: %v", err)
 	}
 
-	// Stop replayer
-	replayer.Stop()
-
-	// Close channels to signal writers
+	// Step 4: Close channels to unblock any remaining writers
 	close(priorityCh)
 	close(normalCh)
 
-	// Wait for all goroutines to finish
+	// Step 5: Wait for all goroutines to finish
 	wg.Wait()
 
 	log.Println("[Main] Graceful shutdown complete")

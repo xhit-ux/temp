@@ -12,6 +12,8 @@ import (
 
 	"opc2ymatrix/metrics"
 	"opc2ymatrix/model"
+
+	"github.com/google/uuid"
 )
 
 // ReplayFunc is the callback that writes a batch of recovered events to the database.
@@ -21,14 +23,14 @@ type ReplayFunc func(ctx context.Context, batch []model.IngestEvent, batchID str
 // Replayer periodically scans the dead-letter directory for NDJSON files,
 // reads events in small batches, and replays them via InsertOnConflict.
 type Replayer struct {
-	dir        string
-	interval   time.Duration
-	batchSize  int
-	dlWriter   *Writer
-	metrics    *metrics.Tracker
-	replayFn   ReplayFunc
-	stopCh     chan struct{}
-	doneCh     chan struct{}
+	dir       string
+	interval  time.Duration
+	batchSize int
+	dlWriter  *Writer
+	metrics   *metrics.Tracker
+	replayFn  ReplayFunc
+	stopCh    chan struct{}
+	doneCh    chan struct{}
 }
 
 // NewReplayer creates a periodic dead-letter replayer.
@@ -149,10 +151,14 @@ func (r *Replayer) replayFile(ctx context.Context, filePath string) (replayed in
 
 		// Flush batch when it reaches target size
 		if len(batch) >= r.batchSize {
-			err := r.replayFn(ctx, batch, rec.BatchID)
+			replayBatchID := rec.BatchID
+			if replayBatchID == "" {
+				replayBatchID = uuid.New().String() + "-replay"
+			}
+			err := r.replayFn(ctx, batch, replayBatchID)
 			if err != nil {
 				log.Printf("[DeadLetter] ERROR replay batch failed (batch %s, %d events): %v",
-					rec.BatchID, len(batch), err)
+					replayBatchID, len(batch), err)
 				failed += len(batch)
 				remaining = append(remaining, batchToRecords(batch, rec)...)
 			} else {
@@ -164,8 +170,8 @@ func (r *Replayer) replayFile(ctx context.Context, filePath string) (replayed in
 
 	// Flush remainder
 	if len(batch) > 0 {
-		// Use dummy batchID for last partial batch
-		err := r.replayFn(ctx, batch, "dlq-replay-"+time.Now().Format(time.RFC3339))
+		replayBatchID := uuid.New().String() + "-replay"
+		err := r.replayFn(ctx, batch, replayBatchID)
 		if err != nil {
 			log.Printf("[DeadLetter] ERROR replay final batch failed (%d events): %v", len(batch), err)
 			failed += len(batch)
