@@ -11,7 +11,7 @@ OPC UA 设备 → Subscription 实时采集 → 事件映射 → HTTP 传输
 
 **覆盖能力**：批量写入、失败重试、死信补偿、断线重连、写入速率监控、异常/告警实时推送。
 
-**暂未覆盖**：数据库极限压测、生产级安全（OPC UA 证书/认证）、大规模设备仿真。
+**暂未覆盖**：数据库极限压测、生产级安全、大规模设备仿真。
 
 OPC UA相关组件文档：[README.md](opcua\README.md)
 
@@ -218,7 +218,7 @@ go run main.go --env ../../.env
 
 首次启动自动执行：
 - 检测目标数据库是否存在，不存在则自动创建
-- 创建 `opc_point_data` 和 `opc_alarm_event` 表
+- 创建 `opc_point_data`、`opc_alarm_event` 和 `opc_operation_log` 表
 - 创建唯一索引和复合索引
 - 检测 Greenplum/YMatrix 并自动添加 `DISTRIBUTED BY`
 
@@ -513,6 +513,8 @@ ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END,
 | `POST` | `/api/v1/admin/flush` | 手动触发 flush |
 | `POST` | `/api/v1/admin/dead-letter/replay` | 手动触发死信补偿 |
 | `GET` | `/api/v1/admin/dead-letter/stats` | 死信文件统计 |
+| `GET` | `/api/v1/logs/query?level=&keyword=&module=&from=&to=&limit=&offset=` | 运维日志查询 |
+| `GET` | `/api/v1/logs/stats` | 运维日志统计（按级别计数） |
 | `POST` | `/api/v1/admin/sql` | SQL 控制台（仅调试） |
 | `GET` | `/api/v1/health/live` | 存活检查 |
 | `GET` | `/api/v1/health/ready` | 就绪检查（含数据库 ping） |
@@ -567,7 +569,24 @@ ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END,
 | `acknowledged_by` | text | 确认人 |
 | `created_at` | timestamptz | 记录创建时间 |
 
-### 11.3 分布键说明
+### 11.3 运维日志表 `opc_operation_log`
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | varchar(36) | 日志记录唯一标识 (UUID) |
+| `timestamp` | timestamptz | 日志产生时间 (UTC) |
+| `level` | text | 日志级别 (DEBUG/INFO/WARN/ERROR) |
+| `module` | text | 产生日志的模块名称 |
+| `message` | text | 日志消息正文 |
+| `extra` | text | 附加上下文信息 (可选) |
+
+**索引**：
+- `idx_ops_log_ts`：`timestamp DESC` 时间排序索引
+- `idx_ops_log_level`：`(level, timestamp DESC)` 按级别+时间的复合索引
+
+日志系统采用 **DB 优先落库 + 文件降级** 策略。DB 正常时写入 `opc_operation_log` 表，不可用时自动降级到本地 NDJSON 文件 (`data/logs/`)，24 小时自动清理。前端看板提供 "📋 运维日志" 标签页，支持按级别筛选、关键词搜索、分页。
+
+### 11.4 分布键说明
 
 ```sql
 DISTRIBUTED BY (event_id)  -- Greenplum/YMatrix 专用

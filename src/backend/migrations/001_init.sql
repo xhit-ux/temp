@@ -62,7 +62,24 @@ CREATE TABLE IF NOT EXISTS opc_alarm_event (
 );
 
 -- ============================================================================
--- 3. Distribution (YMatrix / Greenplum only)
+-- 3. Operations log table
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS opc_operation_log (
+    id          varchar(36) NOT NULL,
+    timestamp   timestamptz NOT NULL DEFAULT now(),
+    level       text        NOT NULL,
+    module      text        NOT NULL,
+    message     text        NOT NULL,
+    extra       text
+);
+
+CREATE INDEX IF NOT EXISTS idx_ops_log_ts
+    ON opc_operation_log (timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_log_level
+    ON opc_operation_log (level, timestamp DESC);
+
+-- ============================================================================
+-- 4. Distribution (YMatrix / Greenplum only)
 -- ============================================================================
 -- Uncomment the following ALTER TABLE statements after connecting to a
 -- Greenplum/YMatrix instance.  Standard PostgreSQL does not support

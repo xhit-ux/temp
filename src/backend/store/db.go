@@ -179,8 +179,9 @@ func (db *DB) ensureTables(ctx context.Context) error {
 
 	hasPointData := db.tableExists(ctx, "opc_point_data")
 	hasAlarm := db.tableExists(ctx, "opc_alarm_event")
+	hasOpsLog := db.tableExists(ctx, "opc_operation_log")
 
-	if hasPointData && hasAlarm {
+	if hasPointData && hasAlarm && hasOpsLog {
 		log.Println("[DB] All required tables already exist, skipping DDL")
 		if err := db.ensureIndexes(ctx); err != nil {
 			return fmt.Errorf("ensure indexes: %w", err)
@@ -188,13 +189,16 @@ func (db *DB) ensureTables(ctx context.Context) error {
 		return nil
 	}
 
-	log.Printf("[DB] Bootstrapping tables: point_data=%v alarm=%v", hasPointData, hasAlarm)
+	log.Printf("[DB] Bootstrapping tables: point_data=%v alarm=%v ops_log=%v", hasPointData, hasAlarm, hasOpsLog)
 
 	if err := db.createPointDataTable(ctx, isGreenplum); err != nil {
 		return fmt.Errorf("create opc_point_data: %w", err)
 	}
 	if err := db.createAlarmTable(ctx, isGreenplum); err != nil {
 		return fmt.Errorf("create opc_alarm_event: %w", err)
+	}
+	if err := db.createOpsLogTable(ctx, isGreenplum); err != nil {
+		return fmt.Errorf("create opc_operation_log: %w", err)
 	}
 	if err := db.ensureIndexes(ctx); err != nil {
 		return fmt.Errorf("ensure indexes: %w", err)
@@ -283,6 +287,38 @@ func (db *DB) createAlarmTable(ctx context.Context, isGreenplum bool) error {
 		return err
 	}
 	log.Println("[DB] Table opc_alarm_event ready")
+	return nil
+}
+
+// createOpsLogTable creates the operations log table.
+func (db *DB) createOpsLogTable(ctx context.Context, isGreenplum bool) error {
+	sql := `CREATE TABLE IF NOT EXISTS opc_operation_log (
+		id          varchar(36) NOT NULL,
+		timestamp   timestamptz NOT NULL DEFAULT now(),
+		level       text        NOT NULL,
+		module      text        NOT NULL,
+		message     text        NOT NULL,
+		extra       text
+	)`
+	if isGreenplum {
+		sql += ` DISTRIBUTED BY (id)`
+	}
+	if _, err := db.Pool.Exec(ctx, sql); err != nil {
+		return err
+	}
+	log.Println("[DB] Table opc_operation_log ready")
+
+	// Create index for log queries by timestamp
+	idxSQL := `CREATE INDEX IF NOT EXISTS idx_ops_log_ts ON opc_operation_log (timestamp DESC)`
+	if _, err := db.Pool.Exec(ctx, idxSQL); err != nil {
+		return fmt.Errorf("create idx_ops_log_ts: %w", err)
+	}
+	// Create index for log queries by level
+	idxLevelSQL := `CREATE INDEX IF NOT EXISTS idx_ops_log_level ON opc_operation_log (level, timestamp DESC)`
+	if _, err := db.Pool.Exec(ctx, idxLevelSQL); err != nil {
+		return fmt.Errorf("create idx_ops_log_level: %w", err)
+	}
+
 	return nil
 }
 

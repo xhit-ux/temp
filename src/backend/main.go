@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"opc2ymatrix/config"
 	"opc2ymatrix/deadletter"
 	"opc2ymatrix/handler"
+	"opc2ymatrix/logger"
 	"opc2ymatrix/metrics"
 	"opc2ymatrix/model"
 	"opc2ymatrix/query"
@@ -143,6 +145,19 @@ func main() {
 	log.Printf("[Main] Dead-letter replayer started (interval=%ds, batch_size=%d)",
 		cfg.DeadLetterReplayInterval, cfg.DeadLetterReplayBatchSize)
 
+	// Initialize structured operation logger
+	opsLogger, err := logger.New(logger.Config{
+		DB:         db.Pool,
+		FileDir:    "data/logs",
+		MinLevel:   logger.INFO,
+		BufferSize: 2000,
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize operations logger: %v", err)
+	}
+	defer opsLogger.Stop()
+	opsLogger.Info("Main", "OPC2YMatrix Go Backend started")
+
 	// Initialize SSE broker
 	sseBroker := stream.NewBroker()
 
@@ -249,6 +264,47 @@ func main() {
 			"total_size_bytes": totalSize,
 			"oldest_file_time": oldestTime.Format(time.RFC3339),
 		})
+	})
+
+	// Operations log endpoints
+	mux.HandleFunc("/api/v1/logs/query", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		q := r.URL.Query()
+		filter := logger.LogFilter{
+			Level:   q.Get("level"),
+			Module:  q.Get("module"),
+			Keyword: q.Get("keyword"),
+			From:    q.Get("from"),
+			To:      q.Get("to"),
+		}
+		if l := q.Get("limit"); l != "" {
+			fmt.Sscanf(l, "%d", &filter.Limit)
+		}
+		if o := q.Get("offset"); o != "" {
+			fmt.Sscanf(o, "%d", &filter.Offset)
+		}
+
+		result, err := opsLogger.Query(r.Context(), filter)
+		if err != nil {
+			opsLogger.Error("API", "log query failed: "+err.Error())
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(result)
+	})
+
+	mux.HandleFunc("/api/v1/logs/stats", func(w http.ResponseWriter, r *http.Request) {
+		stats := opsLogger.Stats()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(stats)
 	})
 
 	server := &http.Server{

@@ -164,7 +164,7 @@ tr:hover td{background:var(--s2)}
 <script type="text/babel">
 const {useState,useEffect,useCallback,useRef,useMemo}=React;
 // Backend base URL: auto-detected from current page origin, with dev fallback
-const B=window.location.hostname==="localhost"||window.location.hostname==="127.0.0.1"||window.location.hostname===""?window.location.origin||"http://localhost:4048":window.location.origin;
+const B=(function(){var h=window.location.hostname;if(h==="localhost"||h==="127.0.0.1")return window.location.origin;if(h===""||window.location.protocol==="file:")return"http://localhost:4048";return window.location.origin})();
 
 function useSSE(){
   const [e,setE]=useState([]);const [c,setC]=useState(false);const esRef=useRef(null);
@@ -496,6 +496,95 @@ function VisualFilter({e}){
   </div>;
 }
 
+function LogsPage(){
+  var [filter,setFilter]=useState({level:"",keyword:"",limit:200,offset:0});
+  var [data,setData]=useState(null);var [loading,setLoading]=useState(false);var [err,setErr]=useState(null);
+  var [stats,setStats]=useState(null);
+  var [autoRefresh,setAutoRefresh]=useState(true);
+  var levels=["","DEBUG","INFO","WARN","ERROR"];
+  var loadLogs=useCallback(async()=>{
+    setLoading(true);
+    var params=new URLSearchParams();
+    if(filter.level)params.set("level",filter.level);
+    if(filter.keyword)params.set("keyword",filter.keyword);
+    if(filter.limit)params.set("limit",String(filter.limit));
+    if(filter.offset)params.set("offset",String(filter.offset));
+    try{var r=await fetch(B+"/api/v1/logs/query?"+params.toString());var j=await r.json();
+      if(r.ok)setData(j);else setErr(j.error||"query failed");
+    }catch(e){setErr(e.message)}
+    setLoading(false);
+  },[filter]);
+  var loadStats=useCallback(async()=>{
+    try{var r=await fetch(B+"/api/v1/logs/stats");if(r.ok)setStats(await r.json())}catch{}
+  },[]);
+  useEffect(()=>{loadLogs();loadStats();if(!autoRefresh)return;var i=setInterval(loadLogs,5000);return ()=>clearInterval(i)},[loadLogs,loadStats,autoRefresh]);
+  var setLevel=function(lv){setFilter(function(f){return{...f,level:lv,offset:0}})};
+  var setKeyword=function(kw){setFilter(function(f){return{...f,keyword:kw,offset:0}})};
+  var goPage=function(dir){
+    var newOffset=filter.offset+(dir*(filter.limit||200));
+    if(newOffset<0)newOffset=0;
+    setFilter(function(f){return{...f,offset:newOffset}});
+  };
+  var levelColors={DEBUG:"var(--t2)",INFO:"var(--ac)",WARN:"var(--wa)",ERROR:"var(--er)"};
+  var levelBadgeStyle=function(l){
+    return{display:"inline-block",padding:"1px 8px",borderRadius:"8px",fontSize:"10px",fontWeight:700,
+      color:"#fff",background:(levelColors[l]||"var(--t2)"),minWidth:"50px",textAlign:"center"}
+  };
+  return <div className="content" style={{height:"calc(100vh - 120px)",display:"flex",flexDirection:"column",gap:12}}>
+    <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+      <div className="card" style={{flex:1,minWidth:250,padding:"10px 16px"}}>
+        <div style={{fontSize:10,color:"var(--t2)",marginBottom:4}}>日志统计</div>
+        <div style={{display:"flex",gap:20}}>
+          <span style={{fontSize:22,fontWeight:800,color:"var(--ac)"}}>{(stats?.total||0).toLocaleString()}</span>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+            {stats?.by_level&&Object.keys(stats.by_level).map(function(lv){
+              return <span key={lv} style={{fontSize:11}}><span style={{color:levelColors[lv],fontWeight:700}}>{lv}</span>: {stats.by_level[lv]}</span>
+            })}
+          </div>
+          {stats?.file_mode&&<span style={{fontSize:10,color:"var(--wa)"}}>⚠️ 文件模式 (DB不可用)</span>}
+        </div>
+      </div>
+    </div>
+    <div className="card full" style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <h3>📋 运维日志 <span className="badge">{data?.total||0}条记录 · 24h窗口 · 每5s自动刷新</span></h3>
+      <div className="card-desc">系统运行日志 · DB落库优先 · 落库失败则写本地NDJSON文件 · 支持按级别、关键词筛选 · 最多保留24小时</div>
+      <div className="ctrl" style={{flexShrink:0}}>
+        <select value={filter.level} onChange={function(e){setLevel(e.target.value)}}>
+          {levels.map(function(l){return <option key={l} value={l}>{l||"全部级别"}</option>})}
+        </select>
+        <input type="text" placeholder="关键词搜索..." value={filter.keyword} onChange={function(e){setKeyword(e.target.value)}} style={{width:200}}/>
+        <button className="btn sm" onClick={loadLogs}>{loading?"⏳ 查询中...":"🔍 查询"}</button>
+        <button className="btn ghost sm" onClick={function(){setKeyword("");setLevel("");setFilter(function(f){return{...f,keyword:"",level:"",offset:0}})}}>重置</button>
+        <label style={{fontSize:10,color:"var(--t2)",display:"flex",alignItems:"center",gap:4,cursor:"pointer",marginLeft:"auto"}}>
+          <input type="checkbox" checked={autoRefresh} onChange={function(e){setAutoRefresh(e.target.checked)}}/>自动刷新
+        </label>
+      </div>
+      <div className="tw" style={{flex:1,overflow:"auto"}}>
+        {err&&<div style={{color:"var(--er)",padding:12,fontSize:12}}>❌ {err}</div>}
+        {data?.entries?.length===0&&!err&&<div className="emp">✅ 暂无日志记录</div>}
+        {data?.entries?.length>0&&<table><thead><tr><th style={{width:130}}>时间</th><th style={{width:60}}>级别</th><th style={{width:100}}>模块</th><th>消息</th></tr></thead>
+        <tbody>{data.entries.map(function(x,i){
+          return <tr key={i}>
+            <td style={{fontSize:10,color:"var(--t2)",whiteSpace:"nowrap"}}>{new Date(x.timestamp).toLocaleString()}</td>
+            <td><span style={levelBadgeStyle(x.level)}>{x.level}</span></td>
+            <td style={{fontSize:11,fontWeight:500}}>{x.module}</td>
+            <td style={{fontSize:11}}>{x.message}{x.extra&&<span style={{color:"var(--t2)",fontSize:10}}> | {x.extra}</span>}</td>
+          </tr>
+        })}</tbody></table>}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,flexShrink:0}}>
+        <div style={{fontSize:10,color:"var(--t2)"}}>
+          {data?.total>0&&<span>{filter.offset+1}-{Math.min(filter.offset+(filter.limit||200),data.total)} / {data.total}</span>}
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          <button className="btn ghost sm" onClick={function(){goPage(-1)}} disabled={!filter.offset}>← 上一页</button>
+          <button className="btn ghost sm" onClick={function(){goPage(1)}} disabled={!data?.has_more}>下一页 →</button>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
 function ThemeToggle(){
   var [dark,setDark]=useState(document.documentElement.getAttribute("data-theme")==="dark");
   useEffect(()=>{document.documentElement.setAttribute("data-theme",dark?"dark":"light")},[dark]);
@@ -515,6 +604,7 @@ function App(){
           <button className={"nav-tab"+(tab==="dashboard"?" active":"")} onClick={()=>setTab("dashboard")}>📊 仪表盘</button>
           <button className={"nav-tab"+(tab==="abnormal"?" active":"")} onClick={()=>setTab("abnormal")}>⚠️ 异常点位</button>
           <button className={"nav-tab"+(tab==="sql"?" active":"")} onClick={()=>setTab("sql")}>💾 SQL查询</button>
+          <button className={"nav-tab"+(tab==="logs"?" active":"")} onClick={()=>setTab("logs")}>📋 运维日志</button>
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -540,6 +630,8 @@ function App(){
         <VisualFilter e={e}/>
       </div>
     </div>}
+
+    {tab==="logs"&&<LogsPage/>}
 
     <div className="footer">YMatrix PoC · 4台设备 × 6点位 = 24数据点 · OPC UA Subscription 实时采集 · pgx CopyFrom 批量写入</div>
   </div>;

@@ -404,39 +404,129 @@ func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent
 	return nil
 }
 
-// InsertOnConflict performs a batch INSERT ... ON CONFLICT DO NOTHING.
-// This is intended for dead-letter compensation where duplicate event_id
-// values may exist.  Not used on the normal CopyFrom path.
-//
-// TODO(perf): If dead-letter replay volume grows, switch to a single
-// INSERT ... SELECT unnest($1::uuid[]) ... ON CONFLICT DO NOTHING
-// instead of looping per row.
+// InsertOnConflict performs a batch INSERT ... ON CONFLICT DO NOTHING
+// using the unnest(array) pattern for high-throughput dead-letter replay.
+// This sends all events in one SQL statement instead of looping per row.
 func (bw *BatchWriter) InsertOnConflict(ctx context.Context, batch []model.IngestEvent, batchID string) error {
-	for _, event := range batch {
-		event.Validate()
-		row := event.Row(batchID)
-		_, err := bw.db.Exec(ctx,
-			`INSERT INTO opc_point_data (
-				event_id, device_id, point_name, data_type, unit,
-				value_number, value_text, value_time,
-				quality_code, quality_name, event_type,
-				is_abnormal, abnormal_reason,
-				source_timestamp, server_timestamp, collector_timestamp,
-				batch_id
-			) VALUES (
-				$1, $2, $3, $4, $5,
-				$6, $7, $8,
-				$9, $10, $11,
-				$12, $13,
-				$14, $15, $16,
-				$17
-			) ON CONFLICT (event_id) DO NOTHING`,
-			row...,
-		)
-		if err != nil {
-			return fmt.Errorf("InsertOnConflict failed for event_id=%s: %w", event.EventID, err)
-		}
+	if len(batch) == 0 {
+		return nil
 	}
+
+	n := len(batch)
+
+	// Build typed slices for each column
+	eventIDs := make([]string, n)
+	deviceIDs := make([]string, n)
+	pointNames := make([]string, n)
+	dataTypes := make([]string, n)
+	units := make([]string, n)
+	valueNumbers := make([]*float64, n)
+	valueTexts := make([]*string, n)
+	valueTimes := make([]*time.Time, n)
+	qualityCodes := make([]int64, n)
+	qualityNames := make([]string, n)
+	eventTypes := make([]string, n)
+	isAbnormals := make([]bool, n)
+	abnormalReasons := make([]*string, n)
+	sourceTimestamps := make([]*time.Time, n)
+	serverTimestamps := make([]*time.Time, n)
+	collectorTimestamps := make([]time.Time, n)
+	batchIDs := make([]string, n)
+
+	for i, event := range batch {
+		event.Validate()
+		eventIDs[i] = event.EventID
+		deviceIDs[i] = event.DeviceID
+		pointNames[i] = event.PointName
+		dataTypes[i] = event.DataType
+		units[i] = event.Unit
+		valueNumbers[i] = event.ValueNumber
+		valueTexts[i] = event.ValueText
+
+		// Parse value_time string to *time.Time
+		if event.ValueTime != nil {
+			t, err := time.Parse(time.RFC3339Nano, *event.ValueTime)
+			if err != nil {
+				t, _ = time.Parse(time.RFC3339, *event.ValueTime)
+			}
+			if !t.IsZero() {
+				valueTimes[i] = &t
+			}
+		}
+
+		qualityCodes[i] = event.QualityCode
+		qualityNames[i] = event.QualityName
+		eventTypes[i] = event.EventType
+
+		abnormal := event.IsAbnormal()
+		isAbnormals[i] = abnormal
+		if abnormal {
+			reason := event.AbnormalReason()
+			abnormalReasons[i] = &reason
+		}
+
+		if event.SourceTimestamp != nil {
+			t := event.ParsedSourceTimestamp()
+			if !t.IsZero() {
+				sourceTimestamps[i] = &t
+			}
+		}
+		if event.ServerTimestamp != nil {
+			t, err := time.Parse(time.RFC3339Nano, *event.ServerTimestamp)
+			if err != nil {
+				t, _ = time.Parse(time.RFC3339, *event.ServerTimestamp)
+			}
+			if !t.IsZero() {
+				serverTimestamps[i] = &t
+			}
+		}
+		collectorTimestamps[i] = event.ParsedCollectorTimestamp()
+		batchIDs[i] = batchID
+	}
+
+	_, err := bw.db.Exec(ctx,
+		`INSERT INTO opc_point_data (
+			event_id, device_id, point_name, data_type, unit,
+			value_number, value_text, value_time,
+			quality_code, quality_name, event_type,
+			is_abnormal, abnormal_reason,
+			source_timestamp, server_timestamp, collector_timestamp,
+			batch_id
+		)
+		SELECT
+			u.event_id, u.device_id, u.point_name, u.data_type, u.unit,
+			u.value_number, u.value_text, u.value_time,
+			u.quality_code, u.quality_name, u.event_type,
+			u.is_abnormal, u.abnormal_reason,
+			u.source_timestamp, u.server_timestamp, u.collector_timestamp,
+			u.batch_id
+		FROM unnest(
+			$1::uuid[], $2::text[], $3::text[], $4::text[], $5::text[],
+			$6::float8[], $7::text[], $8::timestamptz[],
+			$9::bigint[], $10::text[], $11::text[],
+			$12::boolean[], $13::text[],
+			$14::timestamptz[], $15::timestamptz[], $16::timestamptz[],
+			$17::uuid[]
+		) AS u(
+			event_id, device_id, point_name, data_type, unit,
+			value_number, value_text, value_time,
+			quality_code, quality_name, event_type,
+			is_abnormal, abnormal_reason,
+			source_timestamp, server_timestamp, collector_timestamp,
+			batch_id
+		)
+		ON CONFLICT (event_id) DO NOTHING`,
+		eventIDs, deviceIDs, pointNames, dataTypes, units,
+		valueNumbers, valueTexts, valueTimes,
+		qualityCodes, qualityNames, eventTypes,
+		isAbnormals, abnormalReasons,
+		sourceTimestamps, serverTimestamps, collectorTimestamps,
+		batchIDs,
+	)
+	if err != nil {
+		return fmt.Errorf("InsertOnConflict bulk insert %d events: %w", n, err)
+	}
+
 	return nil
 }
 
