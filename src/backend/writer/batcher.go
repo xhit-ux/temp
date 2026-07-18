@@ -13,6 +13,7 @@ import (
 	"opc2ymatrix/deadletter"
 	"opc2ymatrix/metrics"
 	"opc2ymatrix/model"
+	"opc2ymatrix/stream"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -39,6 +40,8 @@ type BatchWriter struct {
 	doneCh     chan struct{}
 	// isPriority distinguishes the priority channel writer from normal batch writers.
 	isPriority bool
+	// sseBroker pushes alarm lifecycle events to connected frontends.
+	sseBroker *stream.Broker
 }
 
 // BatchConfig holds configuration for batch accumulation and retry.
@@ -100,6 +103,11 @@ func NewPriorityWriter(
 		doneCh:     make(chan struct{}),
 		isPriority: true,
 	}
+}
+
+// SetSSEBroker wires the SSE broker for alarm lifecycle broadcasts.
+func (bw *BatchWriter) SetSSEBroker(b *stream.Broker) {
+	bw.sseBroker = b
 }
 
 // Start begins the batch accumulation and flush loop (or immediate write loop for priority).
@@ -370,13 +378,25 @@ func (bw *BatchWriter) copyFrom(ctx context.Context, batch []model.IngestEvent, 
 	return nil
 }
 
-// insertSingle writes one event via single-row INSERT ... ON CONFLICT DO NOTHING.
-// Uses ON CONFLICT so that ambiguous-commit retries are handled idempotently.
+// insertSingle writes one event via single-row INSERT ... ON CONFLICT DO NOTHING
+// in a transaction that also manages alarm lifecycle writes when applicable.
 func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent, batchID string) error {
 	event.Validate()
 	row := event.Row(batchID)
+	occurredAt := event.ParsedSourceTimestamp()
+	if occurredAt.IsZero() {
+		occurredAt = event.ParsedCollectorTimestamp()
+	}
+	alarmID := uuid.New().String()
 
-	_, err := bw.db.Exec(ctx,
+	tx, err := bw.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx for event %s: %w", event.EventID, err)
+	}
+	defer tx.Rollback(ctx) // no-op if committed
+
+	// 1. Write the data point
+	_, err = tx.Exec(ctx,
 		`INSERT INTO opc_point_data (
 			event_id, device_id, point_name, data_type, unit,
 			value_number, value_text, value_time,
@@ -399,9 +419,116 @@ func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return fmt.Errorf("insertSingle event %s: %w", event.EventID, ErrAmbiguousCommit)
 		}
-		return fmt.Errorf("insertSingle failed for event_id=%s: %w", event.EventID, err)
+		return fmt.Errorf("insertSingle point_data for event_id=%s: %w", event.EventID, err)
+	}
+
+	// 2. Handle alarm lifecycle
+	severity := "warning"
+	if event.QualityName == "Bad" {
+		severity = "critical"
+	}
+	alarmType := "quality_alarm"
+	message := fmt.Sprintf("%s/%s: %s", event.DeviceID, event.PointName, event.AbnormalReason())
+
+	switch event.EventType {
+	case "device_offline":
+		alarmType = "device_offline"
+		severity = "critical"
+		message = fmt.Sprintf("Device %s went offline", event.DeviceID)
+		// Insert a new active alarm
+		_, err = tx.Exec(ctx,
+			`INSERT INTO opc_alarm_event (alarm_id, event_id, device_id, point_name, severity, alarm_type, message, status, occurred_at)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8)
+			 ON CONFLICT DO NOTHING`,
+			alarmID, event.EventID, event.DeviceID, event.PointName, severity, alarmType, message, occurredAt,
+		)
+		if err != nil {
+			return fmt.Errorf("insert device_offline alarm for %s: %w", event.DeviceID, err)
+		}
+		bw.broadcastAlarm(alarmID, event, severity, alarmType, message, "active", occurredAt, time.Time{})
+
+	case "device_online":
+		// Recover all active offline alarms for this device
+		now := time.Now().UTC()
+		var recoveredIDs []string
+		rows, err := tx.Query(ctx,
+			`UPDATE opc_alarm_event SET status='recovered', recovered_at=$1
+			 WHERE device_id=$2 AND alarm_type='device_offline' AND status='active'
+			 RETURNING alarm_id`,
+			now, event.DeviceID,
+		)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var rid string
+				if err := rows.Scan(&rid); err == nil {
+					recoveredIDs = append(recoveredIDs, rid)
+				}
+			}
+		}
+		for _, rid := range recoveredIDs {
+			bw.broadcastAlarm(rid, event, "info", "device_offline",
+				fmt.Sprintf("Device %s recovered", event.DeviceID),
+				"recovered", time.Time{}, now,
+			)
+		}
+
+	case "quality_alarm":
+		fallthrough
+	default:
+		if !event.IsAbnormal() {
+			break
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO opc_alarm_event (alarm_id, event_id, device_id, point_name, severity, alarm_type, message, status, occurred_at)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8)
+			 ON CONFLICT DO NOTHING`,
+			alarmID, event.EventID, event.DeviceID, event.PointName, severity, alarmType, message, occurredAt,
+		)
+		if err != nil {
+			return fmt.Errorf("insert quality alarm for %s/%s: %w", event.DeviceID, event.PointName, err)
+		}
+		bw.broadcastAlarm(alarmID, event, severity, alarmType, message, "active", occurredAt, time.Time{})
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx for event %s: %w", event.EventID, err)
 	}
 	return nil
+}
+
+func (bw *BatchWriter) broadcastAlarm(alarmID string, event model.IngestEvent, severity, alarmType, message, status string, occurredAt, recoveredAt time.Time) {
+	if bw.sseBroker == nil {
+		return
+	}
+	var occurredStr, recoveredStr string
+	if !occurredAt.IsZero() {
+		occurredStr = occurredAt.Format(time.RFC3339)
+	}
+	if !recoveredAt.IsZero() {
+		recoveredStr = recoveredAt.Format(time.RFC3339)
+	}
+	msgType := "alarm_create"
+	if status == "recovered" {
+		msgType = "alarm_recover"
+	}
+	pointName := event.PointName
+	if pointName == "" {
+		pn := ""
+		pointName = pn
+	}
+	bw.sseBroker.BroadcastAlarm(stream.AlarmMessage{
+		Type:        msgType,
+		AlarmID:     alarmID,
+		DeviceID:    event.DeviceID,
+		PointName:   event.PointName,
+		Severity:    severity,
+		AlarmType:   alarmType,
+		Message:     message,
+		Status:      status,
+		OccurredAt:  occurredStr,
+		RecoveredAt: recoveredStr,
+	})
 }
 
 // InsertOnConflict performs a batch INSERT ... ON CONFLICT DO NOTHING

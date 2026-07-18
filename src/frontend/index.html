@@ -166,7 +166,9 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 // Backend base URL: auto-detected from current page origin, with dev fallback
 const B=(function(){var h=window.location.hostname;if(h==="localhost"||h==="127.0.0.1")return window.location.origin;if(h===""||window.location.protocol==="file:")return"http://localhost:4048";return window.location.origin})();
 
-function useSSE(){
+function useAlarms(){const[a,setA]=useState([]);return[a,setA]}
+
+function useSSE(setAlarms){
   const [e,setE]=useState([]);const [c,setC]=useState(false);const esRef=useRef(null);
   useEffect(()=>{
     let stopped=false;
@@ -177,7 +179,11 @@ function useSSE(){
       es.addEventListener("connected",()=>{if(!stopped)setC(true)});
       es.addEventListener("point_update",(ev)=>{
         if(stopped)return;
-        try{const d=JSON.parse(ev.data);setE(p=>[...p.slice(-3000),d.event||d])}catch{}
+        try{const d=JSON.parse(ev.data);setE(function(p){return[...p.slice(-3000),d.event||d]})}catch{}
+      });
+      es.addEventListener("alarm",(ev)=>{
+        if(stopped)return;
+        try{var d=JSON.parse(ev.data);setAlarms(function(p){var existing=p.filter(function(x){return x.alarm_id!==d.alarm_id});return[...existing,d].slice(-500)})}catch{}
       });
       es.onerror=()=>{if(stopped)return;setC(false);es.close();setTimeout(connect,2000)};
     }
@@ -585,6 +591,58 @@ function LogsPage(){
   </div>;
 }
 
+function AlarmPage({alarms}){
+  var activeAlarms=useMemo(function(){
+    return alarms.filter(function(a){return a.status==="active"});
+  },[alarms]);
+  var severityOrder={critical:1,warning:2,info:3};
+  var sorted=useMemo(function(){
+    return [...alarms].sort(function(a,b){
+      var sa=severityOrder[a.severity]||9;var sb=severityOrder[b.severity]||9;
+      if(sa!==sb)return sa-sb;
+      return new Date(b.occurred_at||0)-new Date(a.occurred_at||0);
+    });
+  },[alarms]);
+  var sevColor=function(s){return s==="critical"?"var(--er)":s==="warning"?"var(--wa)":"var(--ac)"};
+  var sevBadge=function(s){
+    return{display:"inline-block",padding:"1px 8px",borderRadius:"8px",fontSize:"10px",fontWeight:700,color:"#fff",background:sevColor(s),minWidth:"50px",textAlign:"center"}
+  };
+  var statusBadge=function(s){
+    var bg=s==="active"?"rgba(220,38,38,.12)":s==="recovered"?"rgba(22,163,74,.12)":"var(--s2)";
+    var cl=s==="active"?"var(--er)":s==="recovered"?"var(--ok)":"var(--t2)";
+    return{display:"inline-block",padding:"1px 8px",borderRadius:"8px",fontSize:"10px",fontWeight:700,color:cl,background:bg}
+  };
+  return <div className="content" style={{height:"calc(100vh - 70px)",display:"flex",flexDirection:"column",gap:12}}>
+    <div className="card" style={{flexShrink:0,padding:"10px 16px"}}>
+      <div style={{display:"flex",gap:20,alignItems:"center"}}>
+        <span style={{fontSize:22,fontWeight:800,color:"var(--er)"}}>{activeAlarms.length}</span>
+        <span style={{fontSize:12,color:"var(--t2)"}}>活跃告警</span>
+        <span style={{fontSize:22,fontWeight:800,color:"var(--ok)"}}>{alarms.filter(function(a){return a.status==="recovered"}).length}</span>
+        <span style={{fontSize:12,color:"var(--t2)"}}>已恢复</span>
+      </div>
+    </div>
+    <div className="card full" style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <h3>🔔 告警列表 <span className="badge">SSE实时推送 · {alarms.length}条记录</span></h3>
+      <div className="card-desc">系统运行告警 · 通过 SSE alarm 事件实时推送 · 生产环境应接入飞书/企业微信等通知渠道</div>
+      <div className="tw" style={{flex:1,overflow:"auto"}}>
+        {alarms.length===0?<div className="emp">✅ 暂无告警</div>:
+        <table><thead><tr><th style={{width:140}}>时间</th><th style={{width:60}}>级别</th><th style={{width:70}}>设备</th><th style={{width:80}}>点位</th><th style={{width:80}}>类型</th><th>消息</th><th style={{width:70}}>状态</th></tr></thead>
+        <tbody>{sorted.map(function(a,i){
+          return <tr key={i}>
+            <td style={{fontSize:10,color:"var(--t2)",whiteSpace:"nowrap"}}>{new Date(a.occurred_at||a.created_at||Date.now()).toLocaleString()}</td>
+            <td><span style={sevBadge(a.severity)}>{a.severity}</span></td>
+            <td style={{fontSize:11,fontWeight:500}}>{a.device_id}</td>
+            <td style={{fontSize:11}}>{a.point_name||"—"}</td>
+            <td style={{fontSize:10,color:"var(--t2)"}}>{a.alarm_type}</td>
+            <td style={{fontSize:11}}>{a.message}</td>
+            <td><span style={statusBadge(a.status)}>{a.status==="active"?"活跃":a.status==="recovered"?"已恢复":a.status}</span></td>
+          </tr>
+        })}</tbody></table>}
+      </div>
+    </div>
+  </div>;
+}
+
 function ThemeToggle(){
   var [dark,setDark]=useState(document.documentElement.getAttribute("data-theme")==="dark");
   useEffect(()=>{document.documentElement.setAttribute("data-theme",dark?"dark":"light")},[dark]);
@@ -592,8 +650,21 @@ function ThemeToggle(){
 }
 
 function App(){
-  var {e,c}=useSSE();var [m,setM]=useState({});
+  var [alarms,setAlarms]=useAlarms();var {e,c}=useSSE(setAlarms);
+  var [m,setM]=useState({});
   var [tab,setTab]=useState("dashboard");
+  var [popup,setPopup]=useState(null);
+  var lastAlarmLen=useRef(0);
+  useEffect(()=>{
+    if(alarms.length>lastAlarmLen.current){
+      var newest=alarms[alarms.length-1];
+      if(newest&&newest.status==="active"&&newest.type==="alarm_create"){
+        setPopup(newest);
+        setTimeout(function(){setPopup(null)},6000);
+      }
+    }
+    lastAlarmLen.current=alarms.length;
+  },[alarms]);
   useEffect(()=>{var load=async()=>{try{var r=await fetch(B+"/api/v1/metrics");setM(await r.json())}catch{}};load();var i=setInterval(load,3000);return ()=>clearInterval(i)},[]);
   return <div>
     <div className="nav">
@@ -605,6 +676,7 @@ function App(){
           <button className={"nav-tab"+(tab==="abnormal"?" active":"")} onClick={()=>setTab("abnormal")}>⚠️ 异常点位</button>
           <button className={"nav-tab"+(tab==="sql"?" active":"")} onClick={()=>setTab("sql")}>💾 SQL查询</button>
           <button className={"nav-tab"+(tab==="logs"?" active":"")} onClick={()=>setTab("logs")}>📋 运维日志</button>
+          <button className={"nav-tab"+(tab==="alarms"?" active":"")} onClick={()=>setTab("alarms")}>🔔 告警<span style={{marginLeft:4,fontSize:9,background:alarms.filter(function(a){return a.status==="active"}).length>0?"var(--er)":"var(--t2)",color:"#fff",padding:"1px 6px",borderRadius:10}}>{alarms.filter(function(a){return a.status==="active"}).length||0}</span></button>
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -632,6 +704,10 @@ function App(){
     </div>}
 
     {tab==="logs"&&<LogsPage/>}
+
+    {tab==="alarms"&&<AlarmPage alarms={alarms}/>}
+
+    {popup&&<div style={{position:"fixed",bottom:20,right:20,zIndex:999,background:"var(--s1)",border:"1px solid var(--er)",borderRadius:"var(--rd)",padding:"12px 18px",boxShadow:"0 4px 20px rgba(0,0,0,.15)",maxWidth:380,cursor:"pointer"}} onClick={function(){setTab("alarms");setPopup(null)}}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:"var(--er)",animation:"pulse 1s ease-in-out infinite"}}/><span style={{fontSize:12,fontWeight:700,color:"var(--er)"}}>{(popup.severity==="critical"?"🚨":"⚠️")+" 告警"}</span><span style={{marginLeft:"auto",fontSize:10,color:"var(--t2)"}}>{new Date(popup.occurred_at||Date.now()).toLocaleTimeString()}</span></div><div style={{fontSize:11,color:"var(--t)"}}>{popup.message}</div><div style={{fontSize:10,color:"var(--t2)",marginTop:4}}>设备: {popup.device_id} · 点击查看详情 →</div></div>}
 
     <div className="footer">YMatrix PoC · 4台设备 × 6点位 = 24数据点 · OPC UA Subscription 实时采集 · pgx CopyFrom 批量写入</div>
   </div>;

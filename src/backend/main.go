@@ -107,8 +107,12 @@ func main() {
 		}(i)
 	}
 
+	// Initialize SSE broker
+	sseBroker := stream.NewBroker()
+
 	// Start priority writer (single worker with dedicated connection)
 	prioWriter := writer.NewPriorityWriter(priorityCh, prioPgx, m, dlq, batchCfg)
+	prioWriter.SetSSEBroker(sseBroker)
 	allWriters = append(allWriters, prioWriter)
 
 	wg.Add(1)
@@ -157,9 +161,6 @@ func main() {
 	}
 	defer opsLogger.Stop()
 	opsLogger.Info("Main", "OPC2YMatrix Go Backend started")
-
-	// Initialize SSE broker
-	sseBroker := stream.NewBroker()
 
 	// Set up HTTP routes
 	// CORS middleware — browser opens index.html from file:// so origin is null

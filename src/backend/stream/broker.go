@@ -91,6 +91,39 @@ func (b *Broker) BroadcastCommitted(event model.IngestEvent) {
 	})
 }
 
+// AlarmMessage represents an alarm lifecycle event pushed to SSE clients.
+type AlarmMessage struct {
+	Type      string `json:"type"`       // "alarm_create" or "alarm_recover"
+	AlarmID   string `json:"alarm_id"`
+	DeviceID  string `json:"device_id"`
+	PointName string `json:"point_name"`
+	Severity  string `json:"severity"`
+	AlarmType string `json:"alarm_type"`
+	Message   string `json:"message"`
+	Status    string `json:"status"`      // "active" or "recovered"
+	OccurredAt string `json:"occurred_at"`
+	RecoveredAt string `json:"recovered_at,omitempty"`
+}
+
+// BroadcastAlarm pushes an alarm lifecycle event to all SSE clients.
+func (b *Broker) BroadcastAlarm(msg AlarmMessage) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[SSE] ERROR marshaling alarm: %v", err)
+		return
+	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	for ch := range b.clients {
+		select {
+		case ch <- data:
+		default:
+		}
+	}
+}
+
 // HandleSSE serves the SSE endpoint at /api/v1/stream.
 func (b *Broker) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
@@ -120,7 +153,13 @@ func (b *Broker) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "event: point_update\ndata: %s\n\n", data)
+			// Auto-detect event type: alarm messages have type fields
+			var probe struct{ Type string }
+			if err := json.Unmarshal(data, &probe); err == nil && (probe.Type == "alarm_create" || probe.Type == "alarm_recover") {
+				fmt.Fprintf(w, "event: alarm\ndata: %s\n\n", data)
+			} else {
+				fmt.Fprintf(w, "event: point_update\ndata: %s\n\n", data)
+			}
 			flusher.Flush()
 		}
 	}
