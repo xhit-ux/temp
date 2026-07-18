@@ -19,7 +19,7 @@ OPC UA相关组件文档：[README.md](opcua\README.md)
 
 ## 2. 环境依赖
 
-> 本文档默认您已经安装好相关环境
+> 本文档默认您已经安装好相关基础环境
 
 ### 2.1 系统环境（需提前手动安装）
 
@@ -274,10 +274,13 @@ python -m client.subscription_probe --config config/config.yaml --duration-secon
 [DB] Connected to YMatrix/PostgreSQL database "opc"
 [DB] Table opc_point_data ready
 [DB] Table opc_alarm_event ready
+[DB] Table opc_operation_log ready
 [DB] Bootstrap complete (tables + indexes)
 [Main] Channels: normal=10000 priority=2000
 [Main] Writer pool: 2 normal + 1 priority
 [Main] Dead-letter replayer started (interval=30s, batch_size=100)
+[Logger] Started (min_level=INFO, buffer=2000, retention=24h0m0s)
+[Logger] OPC2YMatrix Go Backend started
 [Main] HTTP server listening on :4048
 ```
 
@@ -376,9 +379,11 @@ python -m client.subscription_probe --config config/config.yaml --duration-secon
 
 - **HTTP 传输无背压传播**：Python Collector 发送 HTTP 后不感知 Go 后端的 channel 深度，Go 返回 429 时 Python 重试但不主动降速。
 
-### 7.3 查询与告警
+### 7.3 告警通知
 
-- **`opc_alarm_event` 表未接入写入链路**：当前 Collector 生成的 `quality_alarm` / `device_offline` 事件写入 `opc_point_data`，告警表仅提供 DDL 和查询 API，需要后续补充写入逻辑。
+- **告警生命周期管理已实现**：PriorityWriter 在写入异常事件时通过事务联动同步写入 `opc_alarm_event` 表，SSE Broker 实时推送 `alarm` 事件，前端弹窗 + "🔔 告警" 标签页展示完整告警列表。
+
+- **外部通知渠道待接入**：当前告警通知仅限前端看板，生产环境应接入飞书/企业微信 Webhook 机器人实现即时通讯触达。
 
 - **去重视图未启用**：`opc_point_data_dedup` 视图已预留定义，当前直接查询主表。数据量增长后需 `EXPLAIN ANALYZE` 评估是否启用。
 
@@ -432,6 +437,7 @@ temp/
 │   │   ├── model/event.go          # IngestEvent 模型与校验
 │   │   ├── handler/ingest.go       # HTTP 接收器（双通道路由）
 │   │   ├── writer/batcher.go       # 批量写入器（CopyFrom + 重试 + 死信）
+│   │   ├── logger/logger.go         # 运维日志模块（DB优先/文件降级）
 │   │   ├── store/db.go             # 连接池/自动建库建表
 │   │   ├── deadletter/writer.go    # 死信 NDJSON 写入
 │   │   ├── deadletter/replayer.go  # 死信补偿重放
