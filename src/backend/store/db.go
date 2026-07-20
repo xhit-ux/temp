@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,18 +13,12 @@ import (
 // DB wraps the pgx connection pool.
 type DB struct {
 	Pool       *pgxpool.Pool
-	dsn        string        // saved for reconnection
 	healthStop chan struct{} // signals healthLoop to exit
 	healthDone chan struct{} // closed when healthLoop has exited
-	mu         sync.RWMutex  // protects Pool pointer swap during reconnect
 }
 
 // healthCheckInterval is how often the background goroutine pings the database.
 const healthCheckInterval = 15 * time.Second
-
-// healthFailThreshold is the number of consecutive ping failures before
-// triggering a reconnection attempt.
-const healthFailThreshold = 3
 
 // NewDB creates a connection pool to YMatrix/PostgreSQL.
 // If the target database does not exist, it connects to the default "postgres"
@@ -40,7 +32,6 @@ func NewDB(ctx context.Context, dsn string) (*DB, error) {
 
 	db := &DB{
 		Pool:       pool,
-		dsn:        dsn,
 		healthStop: make(chan struct{}),
 		healthDone: make(chan struct{}),
 	}
@@ -169,12 +160,7 @@ func createDatabase(ctx context.Context, targetCfg *pgxpool.Config, dbName strin
 func (db *DB) Close() {
 	close(db.healthStop)
 	<-db.healthDone
-	db.mu.RLock()
-	pool := db.Pool
-	db.mu.RUnlock()
-	if pool != nil {
-		pool.Close()
-	}
+	db.Pool.Close()
 	log.Println("[DB] Connection pool closed")
 }
 
@@ -400,15 +386,16 @@ func (db *DB) indexExists(ctx context.Context, name string) bool {
 	return c > 0
 }
 
-// healthLoop periodically pings the database.  After healthFailThreshold
-// consecutive failures it triggers a full reconnect with exponential backoff.
+// healthLoop periodically pings the database to monitor connectivity.
+// pgxpool v5 handles dead-connection detection and recreation internally;
+// this goroutine only provides visibility via log output.
 func (db *DB) healthLoop() {
 	defer close(db.healthDone)
 	ticker := time.NewTicker(healthCheckInterval)
 	defer ticker.Stop()
 
 	consecutive := 0
-	log.Printf("[DB] Health check started (interval=%s, fail_threshold=%d)", healthCheckInterval, healthFailThreshold)
+	log.Printf("[DB] Health check started (interval=%s)", healthCheckInterval)
 
 	for {
 		select {
@@ -418,17 +405,8 @@ func (db *DB) healthLoop() {
 		case <-ticker.C:
 		}
 
-		db.mu.RLock()
-		pool := db.Pool
-		db.mu.RUnlock()
-
-		if pool == nil {
-			consecutive++
-			continue
-		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := pool.Ping(ctx)
+		err := db.Pool.Ping(ctx)
 		cancel()
 
 		if err == nil {
@@ -440,143 +418,19 @@ func (db *DB) healthLoop() {
 		}
 
 		consecutive++
-		log.Printf("[DB] Health check failed (%d/%d): %v", consecutive, healthFailThreshold, err)
-
-		if consecutive >= healthFailThreshold {
-			db.reconnect()
-			consecutive = 0
-		}
+		log.Printf("[DB] Health check failed (%s consecutive): %v", ordinal(consecutive), err)
 	}
 }
 
-// reconnect closes the old pool and creates a new one with exponential backoff.
-// Blocks until a successful connection is established.  The Pool pointer is
-// atomically swapped so callers see the new pool with zero disruption.
-func (db *DB) reconnect() {
-	db.mu.Lock()
-	oldPool := db.Pool
-	db.Pool = nil // nil out to prevent callers from using a dead pool
-	db.mu.Unlock()
-
-	// Close the old pool in background so we don't block dead-letter writers
-	// that may be holding old *pgx.Conn references.
-	if oldPool != nil {
-		go func() {
-			oldPool.Close()
-			log.Println("[DB] Old connection pool closed")
-		}()
+func ordinal(n int) string {
+	switch n {
+	case 1:
+		return "1st"
+	case 2:
+		return "2nd"
+	case 3:
+		return "3rd"
+	default:
+		return fmt.Sprintf("%dth", n)
 	}
-
-	attempt := 0
-	for {
-		attempt++
-
-		// Exponential backoff: 1s, 2s, 4s, 8s, 16s, cap 30s
-		delay := time.Duration(math.Min(float64(time.Second)*math.Pow(2, float64(attempt-1)), 30_000_000_000))
-		log.Printf("[DB] Reconnect attempt %d, waiting %s...", attempt, delay.Round(time.Millisecond))
-
-		select {
-		case <-db.healthStop:
-			log.Println("[DB] Reconnect aborted: health check stopped")
-			return
-		case <-time.After(delay):
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		newPool, err := connectWithDBBootstrap(ctx, db.dsn)
-		cancel()
-
-		if err != nil {
-			log.Printf("[DB] Reconnect attempt %d failed: %v", attempt, err)
-			continue
-		}
-
-		// Ensure tables and indexes still exist (idempotent DDL)
-		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := ensureTablesForPool(ctx2, newPool); err != nil {
-			log.Printf("[DB] Reconnect attempt %d failed during DDL: %v", attempt, err)
-			newPool.Close()
-			cancel2()
-			continue
-		}
-		cancel2()
-
-		db.mu.Lock()
-		db.Pool = newPool
-		db.mu.Unlock()
-
-		log.Printf("[DB] Reconnect succeeded on attempt %d — new pool established", attempt)
-		return
-	}
-}
-
-// ensureTablesForPool is a standalone version of ensureTables that works with
-// a raw *pgxpool.Pool (called during reconnect before db.Pool is set).
-func ensureTablesForPool(ctx context.Context, pool *pgxpool.Pool) error {
-	// Check Greenplum
-	var c int
-	isGP := false
-	if err := pool.QueryRow(ctx,
-		"SELECT count(*) FROM pg_catalog.pg_class WHERE relname = 'gp_segment_configuration'",
-	).Scan(&c); err == nil && c > 0 {
-		isGP = true
-		log.Printf("[DB] Greenplum/YMatrix detected during reconnect")
-	}
-
-	// Tables (idempotent CREATE IF NOT EXISTS)
-	tables := []string{
-		`CREATE TABLE IF NOT EXISTS opc_point_data (
-			event_id uuid NOT NULL, device_id text NOT NULL, point_name text NOT NULL,
-			data_type text NOT NULL, unit text, value_number double precision,
-			value_text text, value_time timestamptz, quality_code bigint NOT NULL,
-			quality_name text NOT NULL, event_type text NOT NULL,
-			is_abnormal boolean NOT NULL DEFAULT false, abnormal_reason text,
-			source_timestamp timestamptz, server_timestamp timestamptz,
-			collector_timestamp timestamptz NOT NULL,
-			received_at timestamptz NOT NULL DEFAULT now(), batch_id uuid
-		)` + gpDistribute(isGP, "event_id"),
-
-		`CREATE TABLE IF NOT EXISTS opc_alarm_event (
-			alarm_id uuid NOT NULL, event_id uuid NOT NULL, device_id text NOT NULL,
-			point_name text, severity text NOT NULL, alarm_type text NOT NULL,
-			message text NOT NULL, status text NOT NULL DEFAULT 'active',
-			occurred_at timestamptz NOT NULL, recovered_at timestamptz,
-			acknowledged_at timestamptz, acknowledged_by text,
-			created_at timestamptz NOT NULL DEFAULT now()
-		)` + gpDistribute(isGP, "alarm_id"),
-
-		`CREATE TABLE IF NOT EXISTS opc_operation_log (
-			id varchar(36) NOT NULL, timestamp timestamptz NOT NULL DEFAULT now(),
-			level text NOT NULL, module text NOT NULL, message text NOT NULL, extra text
-		)` + gpDistribute(isGP, "id"),
-	}
-
-	for _, sql := range tables {
-		if _, err := pool.Exec(ctx, sql); err != nil {
-			return fmt.Errorf("ensure table: %w", err)
-		}
-	}
-
-	// Indexes (idempotent)
-	indexes := []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS ux_opc_point_event ON opc_point_data (event_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_opc_point_device_time ON opc_point_data (device_id, point_name, source_timestamp)`,
-		`CREATE INDEX IF NOT EXISTS idx_opc_point_abnormal_time ON opc_point_data (is_abnormal, source_timestamp)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS ux_opc_alarm_id ON opc_alarm_event (alarm_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_ops_log_ts ON opc_operation_log (timestamp DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_ops_log_level ON opc_operation_log (level, timestamp DESC)`,
-	}
-	for _, sql := range indexes {
-		if _, err := pool.Exec(ctx, sql); err != nil {
-			return fmt.Errorf("ensure index: %w", err)
-		}
-	}
-	return nil
-}
-
-func gpDistribute(isGP bool, key string) string {
-	if !isGP {
-		return ""
-	}
-	return " DISTRIBUTED BY (" + key + ")"
 }

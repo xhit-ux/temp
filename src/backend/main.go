@@ -79,28 +79,14 @@ func main() {
 	// Track all writer instances for ordered shutdown
 	var allWriters []*writer.BatchWriter
 
-	// Acquire a dedicated connection for the priority writer (used by replayer too)
-	prioConn, err := db.Pool.Acquire(ctx)
-	if err != nil {
-		log.Fatalf("Failed to acquire DB connection for priority writer: %v", err)
-	}
-	prioPgx := prioConn.Conn()
-
-	// Start normal writer pool
+	// Start normal writer pool (each writer uses the shared connection pool directly)
 	for i := 0; i < cfg.WriterPoolSize; i++ {
-		dbConn, err := db.Pool.Acquire(ctx)
-		if err != nil {
-			log.Fatalf("Failed to acquire DB connection for normal writer %d: %v", i, err)
-		}
-		pgxConn := dbConn.Conn()
-
-		bw := writer.NewBatchWriter(normalCh, pgxConn, m, dlq, batchCfg)
+		bw := writer.NewBatchWriter(normalCh, db.Pool, m, dlq, batchCfg)
 		allWriters = append(allWriters, bw)
 
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			defer dbConn.Release()
 			log.Printf("[Main] Normal writer %d started", idx)
 			bw.Start(ctx)
 			log.Printf("[Main] Normal writer %d stopped", idx)
@@ -110,15 +96,14 @@ func main() {
 	// Initialize SSE broker
 	sseBroker := stream.NewBroker()
 
-	// Start priority writer (single worker with dedicated connection)
-	prioWriter := writer.NewPriorityWriter(priorityCh, prioPgx, m, dlq, batchCfg)
+	// Start priority writer (single worker using the shared connection pool)
+	prioWriter := writer.NewPriorityWriter(priorityCh, db.Pool, m, dlq, batchCfg)
 	prioWriter.SetSSEBroker(sseBroker)
 	allWriters = append(allWriters, prioWriter)
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer prioConn.Release()
 		log.Println("[Main] Priority writer started")
 		prioWriter.Start(ctx)
 		log.Println("[Main] Priority writer stopped")
@@ -133,7 +118,7 @@ func main() {
 		cfg.DeadLetterReplayBatchSize,
 		m,
 		func(ctx context.Context, batch []model.IngestEvent, batchID string) error {
-			return prioWriter.InsertOnConflict(ctx, batch, batchID)
+			return writer.InsertOnConflictPool(ctx, db.Pool, batch, batchID)
 		},
 	)
 	if err != nil {

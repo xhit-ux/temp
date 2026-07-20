@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrAmbiguousCommit is returned by copyFrom when the database reports a
@@ -26,12 +27,18 @@ import (
 // network — the data is safe, and no retry or dead-letter is needed.
 var ErrAmbiguousCommit = errors.New("ambiguous commit resolved: batch already exists (SQLSTATE 23505)")
 
+// pgxConnOrPool abstracts pgx.Conn and pgxpool.Pool so InsertOnConflictPool
+// can work with either backend.
+type pgxConnOrPool interface {
+	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+}
+
 // BatchWriter reads events from a channel, accumulates them into batches,
 // and writes them to YMatrix using pgx CopyFrom with retry logic.
 // Supports both normal (batch) and priority (single-row immediate) paths.
 type BatchWriter struct {
 	eventCh    <-chan model.IngestEvent
-	db         *pgx.Conn // dedicated connection for CopyFrom
+	db         *pgxpool.Pool
 	metrics    *metrics.Tracker
 	dlq        *deadletter.Writer
 	cfg        BatchConfig
@@ -46,11 +53,11 @@ type BatchWriter struct {
 
 // BatchConfig holds configuration for batch accumulation and retry.
 type BatchConfig struct {
-	BatchSize       int // max events per CopyFrom batch (unused by priority writer)
-	FlushInterval   time.Duration
-	MaxRetries      int
-	RetryBaseDelay  time.Duration
-	WriterPoolSize  int
+	BatchSize      int // max events per CopyFrom batch (unused by priority writer)
+	FlushInterval  time.Duration
+	MaxRetries     int
+	RetryBaseDelay time.Duration
+	WriterPoolSize int
 }
 
 // DefaultBatchConfig returns sensible defaults that can be overridden by env.
@@ -67,14 +74,14 @@ func DefaultBatchConfig() BatchConfig {
 // NewBatchWriter creates a normal batch writer worker.
 func NewBatchWriter(
 	eventCh <-chan model.IngestEvent,
-	dbConn *pgx.Conn,
+	dbPool *pgxpool.Pool,
 	m *metrics.Tracker,
 	dlq *deadletter.Writer,
 	cfg BatchConfig,
 ) *BatchWriter {
 	return &BatchWriter{
 		eventCh:    eventCh,
-		db:         dbConn,
+		db:         dbPool,
 		metrics:    m,
 		dlq:        dlq,
 		cfg:        cfg,
@@ -88,14 +95,14 @@ func NewBatchWriter(
 // (single-row transactions) without batch accumulation.  Used for abnormal/alert events.
 func NewPriorityWriter(
 	eventCh <-chan model.IngestEvent,
-	dbConn *pgx.Conn,
+	dbPool *pgxpool.Pool,
 	m *metrics.Tracker,
 	dlq *deadletter.Writer,
 	cfg BatchConfig,
 ) *BatchWriter {
 	return &BatchWriter{
 		eventCh:    eventCh,
-		db:         dbConn,
+		db:         dbPool,
 		metrics:    m,
 		dlq:        dlq,
 		cfg:        cfg,
@@ -347,13 +354,21 @@ func (bw *BatchWriter) writeSingleWithRetry(ctx context.Context, event model.Ing
 
 // copyFrom performs a single pgx.CopyFrom batch insert.
 // Validation is performed at ingest time (handler/ingest.go); no need to re-validate here.
-func (bw *BatchWriter) copyFrom(ctx context.Context, batch []model.IngestEvent, batchID string) error {
+func (bw *BatchWriter) copyFrom(ctx context.Context, batch []model.IngestEvent, batchID string) (err error) {
+	// recover from pgx internal panic when connection is severed (e.g. DB restart)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("CopyFrom panic (connection severed): %v", r)
+			log.Printf("[Writer] Recovered from CopyFrom panic: %v", r)
+		}
+	}()
+
 	rows := make([][]interface{}, len(batch))
 	for i := range batch {
 		rows[i] = batch[i].Row(batchID)
 	}
 
-	_, err := bw.db.CopyFrom(
+	_, err = bw.db.CopyFrom(
 		ctx,
 		pgx.Identifier{"opc_point_data"},
 		[]string{
@@ -398,7 +413,14 @@ type pendingAlarm struct {
 //   - #2: SSE broadcasts deferred until AFTER tx.Commit() to eliminate ghost alarms.
 //   - #4: device_offline dedup check avoids duplicate active alarms for the same device.
 //   - #6: rows.Close() called explicitly instead of defer (wrong scope in if-block).
-func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent, batchID string) error {
+func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent, batchID string) (err error) {
+	// recover from pgx internal panic when connection is severed (e.g. DB restart)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("insertSingle panic (connection severed): %v", r)
+			log.Printf("[Writer] Recovered from insertSingle panic: %v", r)
+		}
+	}()
 	event.Validate()
 	row := event.Row(batchID)
 	occurredAt := event.ParsedSourceTimestamp()
@@ -578,7 +600,25 @@ func (bw *BatchWriter) broadcastAlarm(alarmID string, event model.IngestEvent, s
 // InsertOnConflict performs a batch INSERT ... ON CONFLICT DO NOTHING
 // using the unnest(array) pattern for high-throughput dead-letter replay.
 // This sends all events in one SQL statement instead of looping per row.
-func (bw *BatchWriter) InsertOnConflict(ctx context.Context, batch []model.IngestEvent, batchID string) error {
+//
+// Deprecated: prefer InsertOnConflictPool which uses a *pgxpool.Pool and
+// survives DB restarts.  This method may panic if the writer's *pgx.Conn is dead.
+func (bw *BatchWriter) InsertOnConflict(ctx context.Context, batch []model.IngestEvent, batchID string) (err error) {
+	return InsertOnConflictPool(ctx, bw.db, batch, batchID)
+}
+
+// InsertOnConflictPool performs a batch INSERT ... ON CONFLICT DO NOTHING
+// using the unnest(array) pattern.  Uses the given executor (which may be
+// a *pgxpool.Pool or *pgx.Conn) directly — suitable for dead-letter replay
+// where the original writer connection may be dead after a DB restart.
+func InsertOnConflictPool(ctx context.Context, exec pgxConnOrPool, batch []model.IngestEvent, batchID string) (err error) {
+	// recover from pgx internal panic when connection is severed (e.g. DB restart)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("InsertOnConflict panic (connection severed): %v", r)
+			log.Printf("[Writer] Recovered from InsertOnConflict panic: %v", r)
+		}
+	}()
 	if len(batch) == 0 {
 		return nil
 	}
@@ -655,7 +695,7 @@ func (bw *BatchWriter) InsertOnConflict(ctx context.Context, batch []model.Inges
 		batchIDs[i] = batchID
 	}
 
-	_, err := bw.db.Exec(ctx,
+	_, err = exec.Exec(ctx,
 		`INSERT INTO opc_point_data (
 			event_id, device_id, point_name, data_type, unit,
 			value_number, value_text, value_time,
@@ -757,6 +797,8 @@ func isRetryable(err error) bool {
 		"i/o timeout",
 		"broken pipe",
 		"connection pool exhausted",
+		"conn closed",
+		"use of closed network connection",
 		"conn busy",
 	}
 	for _, pattern := range retryablePatterns {
