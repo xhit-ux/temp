@@ -378,8 +378,26 @@ func (bw *BatchWriter) copyFrom(ctx context.Context, batch []model.IngestEvent, 
 	return nil
 }
 
+// pendingAlarm holds alarm broadcast metadata deferred until after tx commit
+// to prevent ghost-alarm broadcasts when the transaction rolls back.
+type pendingAlarm struct {
+	alarmID     string
+	event       model.IngestEvent
+	severity    string
+	alarmType   string
+	message     string
+	status      string
+	occurredAt  time.Time
+	recoveredAt time.Time
+}
+
 // insertSingle writes one event via single-row INSERT ... ON CONFLICT DO NOTHING
 // in a transaction that also manages alarm lifecycle writes when applicable.
+//
+// Fixes applied:
+//   - #2: SSE broadcasts deferred until AFTER tx.Commit() to eliminate ghost alarms.
+//   - #4: device_offline dedup check avoids duplicate active alarms for the same device.
+//   - #6: rows.Close() called explicitly instead of defer (wrong scope in if-block).
 func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent, batchID string) error {
 	event.Validate()
 	row := event.Row(batchID)
@@ -422,7 +440,7 @@ func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent
 		return fmt.Errorf("insertSingle point_data for event_id=%s: %w", event.EventID, err)
 	}
 
-	// 2. Handle alarm lifecycle
+	// 2. Handle alarm lifecycle — collect pending broadcasts; commit FIRST, then broadcast
 	severity := "warning"
 	if event.QualityName == "Bad" {
 		severity = "critical"
@@ -430,22 +448,38 @@ func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent
 	alarmType := "quality_alarm"
 	message := fmt.Sprintf("%s/%s: %s", event.DeviceID, event.PointName, event.AbnormalReason())
 
+	var pending []pendingAlarm
+
 	switch event.EventType {
 	case "device_offline":
 		alarmType = "device_offline"
 		severity = "critical"
 		message = fmt.Sprintf("Device %s went offline", event.DeviceID)
-		// Insert a new active alarm
+
+		// Fix #4: check for existing active offline alarm before inserting
+		var existingCount int
+		err = tx.QueryRow(ctx,
+			`SELECT count(*) FROM opc_alarm_event
+			 WHERE device_id=$1 AND alarm_type='device_offline' AND status='active'`,
+			event.DeviceID,
+		).Scan(&existingCount)
+		if err == nil && existingCount > 0 {
+			log.Printf("[Writer] Device %s already has active offline alarm, skipping insert", event.DeviceID)
+			break
+		}
+
+		// Fix #3: ON CONFLICT (alarm_id) DO NOTHING backed by ux_opc_alarm_id unique index.
 		_, err = tx.Exec(ctx,
 			`INSERT INTO opc_alarm_event (alarm_id, event_id, device_id, point_name, severity, alarm_type, message, status, occurred_at)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8)
-			 ON CONFLICT DO NOTHING`,
+			 ON CONFLICT (alarm_id) DO NOTHING`,
 			alarmID, event.EventID, event.DeviceID, event.PointName, severity, alarmType, message, occurredAt,
 		)
 		if err != nil {
 			return fmt.Errorf("insert device_offline alarm for %s: %w", event.DeviceID, err)
 		}
-		bw.broadcastAlarm(alarmID, event, severity, alarmType, message, "active", occurredAt, time.Time{})
+		// Fix #2: defer broadcast until after commit
+		pending = append(pending, pendingAlarm{alarmID, event, severity, alarmType, message, "active", occurredAt, time.Time{}})
 
 	case "device_online":
 		// Recover all active offline alarms for this device
@@ -458,19 +492,20 @@ func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent
 			now, event.DeviceID,
 		)
 		if err == nil {
-			defer rows.Close()
 			for rows.Next() {
 				var rid string
 				if err := rows.Scan(&rid); err == nil {
 					recoveredIDs = append(recoveredIDs, rid)
 				}
 			}
+			rows.Close() // Fix #6: explicit close instead of defer (was in wrong scope)
 		}
+		// Fix #2: defer broadcast until after commit
 		for _, rid := range recoveredIDs {
-			bw.broadcastAlarm(rid, event, "info", "device_offline",
+			pending = append(pending, pendingAlarm{rid, event, "info", "device_offline",
 				fmt.Sprintf("Device %s recovered", event.DeviceID),
 				"recovered", time.Time{}, now,
-			)
+			})
 		}
 
 	case "quality_alarm":
@@ -479,21 +514,30 @@ func (bw *BatchWriter) insertSingle(ctx context.Context, event model.IngestEvent
 		if !event.IsAbnormal() {
 			break
 		}
+		// Fix #3: ON CONFLICT (alarm_id) DO NOTHING backed by ux_opc_alarm_id unique index.
 		_, err = tx.Exec(ctx,
 			`INSERT INTO opc_alarm_event (alarm_id, event_id, device_id, point_name, severity, alarm_type, message, status, occurred_at)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8)
-			 ON CONFLICT DO NOTHING`,
+			 ON CONFLICT (alarm_id) DO NOTHING`,
 			alarmID, event.EventID, event.DeviceID, event.PointName, severity, alarmType, message, occurredAt,
 		)
 		if err != nil {
 			return fmt.Errorf("insert quality alarm for %s/%s: %w", event.DeviceID, event.PointName, err)
 		}
-		bw.broadcastAlarm(alarmID, event, severity, alarmType, message, "active", occurredAt, time.Time{})
+		// Fix #2: defer broadcast until after commit
+		pending = append(pending, pendingAlarm{alarmID, event, severity, alarmType, message, "active", occurredAt, time.Time{}})
 	}
 
+	// Fix #2: commit FIRST, then broadcast SSE — prevents ghost alarms on rollback.
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit tx for event %s: %w", event.EventID, err)
 	}
+
+	// Broadcast all pending alarm lifecycle events AFTER successful commit
+	for _, pa := range pending {
+		bw.broadcastAlarm(pa.alarmID, pa.event, pa.severity, pa.alarmType, pa.message, pa.status, pa.occurredAt, pa.recoveredAt)
+	}
+
 	return nil
 }
 

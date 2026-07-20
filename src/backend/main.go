@@ -161,6 +161,7 @@ func main() {
 	}
 	defer opsLogger.Stop()
 	opsLogger.Info("Main", "OPC2YMatrix Go Backend started")
+	log.SetOutput(logger.NewLogWriter(opsLogger))
 
 	// Set up HTTP routes
 	// CORS middleware — browser opens index.html from file:// so origin is null

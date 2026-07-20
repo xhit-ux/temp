@@ -61,6 +61,10 @@ CREATE TABLE IF NOT EXISTS opc_alarm_event (
     created_at        timestamptz NOT NULL DEFAULT now()
 );
 
+-- Unique index on alarm_id for idempotent alarm deduplication
+CREATE UNIQUE INDEX IF NOT EXISTS ux_opc_alarm_id
+    ON opc_alarm_event (alarm_id);
+
 -- ============================================================================
 -- 3. Operations log table
 -- ============================================================================
@@ -86,7 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_ops_log_level
 -- DISTRIBUTED BY; the statements will be silently ignored there.
 
 -- ALTER TABLE opc_point_data SET DISTRIBUTED BY (event_id);
--- ALTER TABLE opc_alarm_event SET DISTRIBUTED BY (event_id);
+-- ALTER TABLE opc_alarm_event SET DISTRIBUTED BY (alarm_id);
 
 -- ============================================================================
 -- 4. Optional: Dedup view (V2.0 Section 13)

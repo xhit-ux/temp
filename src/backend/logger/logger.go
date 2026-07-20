@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -594,4 +595,40 @@ func (l *Logger) Stats() LogStats {
 		ByLevel:  byLevel,
 		FileMode: l.db == nil,
 	}
+}
+// NewLogWriter returns an io.Writer that bridges Go's standard log output
+// into the structured Logger.  Each line becomes a structured log entry
+// with module extracted from the [Module] prefix pattern.
+type logWriter struct {
+	logger *Logger
+}
+
+func NewLogWriter(l *Logger) io.Writer {
+	return &logWriter{logger: l}
+}
+
+func (w *logWriter) Write(p []byte) (n int, err error) {
+	msg := strings.TrimSpace(string(p))
+
+	// Extract module from "[Module] message" pattern
+	module := "Go"
+	message := msg
+	if idx := strings.Index(msg, "] "); idx > 0 && strings.HasPrefix(msg, "[") {
+		module = msg[1:idx]
+		message = msg[idx+2:]
+	}
+
+	// Detect level from keywords
+	level := INFO
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "error") || strings.Contains(lower, "fatal") || strings.Contains(lower, "critical") {
+		level = ERROR
+	} else if strings.Contains(lower, "warning") || strings.Contains(lower, "warn") {
+		level = WARN
+	} else if strings.Contains(lower, "debug") {
+		level = DEBUG
+	}
+
+	w.logger.Log(level, module, message)
+	return len(p), nil
 }

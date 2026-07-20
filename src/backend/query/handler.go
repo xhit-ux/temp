@@ -187,13 +187,13 @@ func (h *Handler) handleAbnormalPoints(w http.ResponseWriter, r *http.Request) {
 	var points []AbnormalPoint
 	for rows.Next() {
 		var p AbnormalPoint
-		var vt time.Time
+		var vt *time.Time
 		if err := rows.Scan(&p.EventID, &p.DeviceID, &p.PointName, &p.ValueNumber, &p.ValueText,
 			&vt, &p.QualityName, &p.AbnormalReason, &p.SourceTimestamp); err != nil {
 			log.Printf("[Query] Abnormal scan error: %v", err)
 			continue
 		}
-		if !vt.IsZero() {
+		if vt != nil {
 			s := vt.Format(time.RFC3339)
 			p.ValueTime = &s
 		}

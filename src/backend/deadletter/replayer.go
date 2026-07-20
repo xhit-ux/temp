@@ -153,7 +153,7 @@ func (r *Replayer) replayFile(ctx context.Context, filePath string) (replayed in
 		if len(batch) >= r.batchSize {
 			replayBatchID := rec.BatchID
 			if replayBatchID == "" {
-				replayBatchID = uuid.New().String() + "-replay"
+				replayBatchID = uuid.New().String()
 			}
 			err := r.replayFn(ctx, batch, replayBatchID)
 			if err != nil {
@@ -170,7 +170,7 @@ func (r *Replayer) replayFile(ctx context.Context, filePath string) (replayed in
 
 	// Flush remainder
 	if len(batch) > 0 {
-		replayBatchID := uuid.New().String() + "-replay"
+		replayBatchID := uuid.New().String()
 		err := r.replayFn(ctx, batch, replayBatchID)
 		if err != nil {
 			log.Printf("[DeadLetter] ERROR replay final batch failed (%d events): %v", len(batch), err)
@@ -184,6 +184,9 @@ func (r *Replayer) replayFile(ctx context.Context, filePath string) (replayed in
 	if err := scanner.Err(); err != nil {
 		return replayed, failed, fmt.Errorf("scanner error: %w", err)
 	}
+
+	// Close file before remove/rewrite (required on Windows — cannot delete open file)
+	f.Close()
 
 	// Overwrite file with remaining (failed) records, or delete if all succeeded
 	if len(remaining) > 0 {
